@@ -1,0 +1,16 @@
+{
+    "name": "Epic.Core",
+    "references": [
+        "GUID:fb9fe9f3530579e45b8c67d4ba552db5",
+        "GUID:5f8e4d4b8b76b434186e4594b80e3e42"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

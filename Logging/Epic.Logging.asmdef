@@ -1,0 +1,15 @@
+{
+    "name": "Epic.Logging",
+    "references": [
+        "GUID:5f8e4d4b8b76b434186e4594b80e3e42"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
