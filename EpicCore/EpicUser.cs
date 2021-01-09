@@ -4,7 +4,7 @@ using Epic.OnlineServices;
 
 #endregion
 
-namespace EpicChill.EpicCore
+namespace Epic.Core
 {
     public class EpicUser
     {
@@ -12,22 +12,16 @@ namespace EpicChill.EpicCore
 
         /// <summary>
         /// </summary>
-        /// <param name="accountId"></param>
         /// <param name="productId"></param>
-        public EpicUser(EpicAccountId accountId, ProductUserId productId)
+        public EpicUser(ProductUserId productId)
         {
-            AccountId = accountId;
             ProductUserId = productId;
         }
 
         #endregion
 
         #region Properties
-
-        /// <summary>
-        /// </summary>
-        public EpicAccountId AccountId { get; private set; }
-
+        
         /// <summary>
         /// 
         /// </summary>

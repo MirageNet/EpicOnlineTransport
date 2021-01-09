@@ -4,9 +4,13 @@ using System;
 
 namespace Epic.OnlineServices
 {
-	public class Handle : IEquatable<Handle>
+	public abstract class Handle : IEquatable<Handle>
 	{
-		public IntPtr InnerHandle { get; private set; }
+		public IntPtr InnerHandle { get; internal set; }
+
+		public Handle()
+		{
+		}
 
 		public Handle(IntPtr innerHandle)
 		{

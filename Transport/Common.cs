@@ -3,247 +3,179 @@
 using System;
 using System.Collections.Concurrent;
 using System.Threading;
-using System.Threading.Tasks;
-using Epic.Logging;
+using Cysharp.Threading.Tasks;
+using Epic.Core;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
-using EpicChill.EpicCore;
-using Mirror;
-using UnityEngine;
+using EpicChill.Transport;
 
 #endregion
 
-namespace EpicChill.Transport
+namespace EpicTransport
 {
     public abstract class Common
     {
-        private readonly bool _enableDebugMode;
-        protected readonly CancellationTokenSource CancellationToken = new CancellationTokenSource();
-        protected readonly ConcurrentQueue<EpicMessage> QueuedMessages = new ConcurrentQueue<EpicMessage>();
-        private GetNextReceivedPacketSizeOptions _packetSizeOptions;
-        private ReceivePacketOptions _receivePacketOptions;
-        protected EpicManager EpicManager;
-        protected SocketId SocketListener;
+        #region Fields
+
+        protected const string SocketName = "One More Night";
+
+        private readonly CancellationTokenSource _cancellationToken = new CancellationTokenSource();
+        private OnIncomingConnectionRequestCallback OnIncomingConnectionRequest;
+        private OnRemoteConnectionClosedCallback OnRemoteConnectionClosed;
+        protected EpicOptions Options;
+        protected EpicTransport Transport;
+        protected internal readonly EpicManager EpicManager;
+        internal readonly ConcurrentQueue<EpicMessage> QueuedData = new ConcurrentQueue<EpicMessage>();
+
+        public Action<Result, string> Error;
+
+        public bool Connected => _cancellationToken.IsCancellationRequested != true;
+
+        #endregion
 
         #region Class Specific
 
-        /// <summary>
-        /// </summary>
-        /// <param name="channel"></param>
-        /// <returns></returns>
-        private PacketReliability ConvertChannel(int channel)
+        protected Common(EpicTransport transport, EpicOptions options)
         {
-            switch (channel)
+            Transport = transport;
+            EpicManager = Transport.EpicManager;
+            Options = options;
+
+            OnIncomingConnectionRequest += OnNewConnection;
+            OnRemoteConnectionClosed += OnConnectionFailed;
+
+            _ = UniTask.Run(ProcessIncomingMessages);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="result"></param>
+        protected abstract void OnNewConnection(OnIncomingConnectionRequestInfo result);
+
+        /// <summary>
+        ///     Connection request has failed to connect to user.
+        /// </summary>
+        /// <param name="result"></param>
+        protected virtual void OnConnectionFailed(OnRemoteConnectionClosedInfo result)
+        {
+            CloseP2PSessionWithUser(result.RemoteUserId);
+
+            _cancellationToken.Cancel();
+
+            switch (result.Reason)
             {
-                // This is a hack atm due to not being able to know mirror's channel count.
-                // Future maybe mirror change this to enum values so we can determine better.
-                case 3:
-                case Channels.DefaultReliable:
-                    return PacketReliability.ReliableOrdered;
-                case Channels.DefaultUnreliable:
-                    return PacketReliability.UnreliableUnordered;
+                case ConnectionClosedReason.ClosedByLocalUser:
+                    throw new Exception("Connection cLosed: The Connection was gracecfully closed by the local user.");
+                case ConnectionClosedReason.ClosedByPeer:
+                    throw new Exception("Connection closed: The connection was gracefully closed by remote user.");
+                case ConnectionClosedReason.ConnectionClosed:
+                    throw new Exception("Connection closed: The connection was unexpectedly closed.");
+                case ConnectionClosedReason.ConnectionFailed:
+                    throw new Exception("Connection failed: Failled to establish connection.");
+                case ConnectionClosedReason.InvalidData:
+                    throw new Exception("Connection failed: The remote user sent us invalid data..");
+                case ConnectionClosedReason.InvalidMessage:
+                    throw new Exception("Connection failed: The remote user sent us an invalid message.");
+                case ConnectionClosedReason.NegotiationFailed:
+                    throw new Exception("Connection failed: Negotiation failed.");
+                case ConnectionClosedReason.TimedOut:
+                    throw new Exception("Connection failed: Timeout.");
+                case ConnectionClosedReason.TooManyConnections:
+                    throw new Exception("Connection failed: Too many connections.");
+                case ConnectionClosedReason.UnexpectedError:
+                    throw new Exception("Unexpected Error, connection will be closed");
+                case ConnectionClosedReason.Unknown:
                 default:
-                    throw new Exception("Unexpected channel: " + channel);
+                    throw new Exception("Unknown Error, connection has been closed.");
             }
         }
 
         /// <summary>
-        ///     Base class constructor.
+        /// 
         /// </summary>
-        /// <param name="epicTransport"></param>
-        /// <param name="debug">Whether or not we want to debug info.</param>
-#if UNITY_EDITOR
-        protected Common(EpicChillTransport epicTransport, bool debug, EpicManager epic)
-#else
-        protected Common(EpicChillTransport epicTransport, EpicManager epic)
-#endif
+        /// <param name="clientUserID"></param>
+        protected void CloseP2PSessionWithUser(ProductUserId clientUserID)
         {
-#if UNITY_EDITOR
-            _enableDebugMode = debug;
-#endif
-            EpicManager = epic;
-
-            // Create all needed structs at start
-            _packetSizeOptions = CreateReceivedPacketSizeOptions();
-            _receivePacketOptions = CreateReceivePacketOptions();
-
-            _ = Task.Run(ProcessEpicMessages);
-            _ = Task.Run(ProcessQueuedMessages);
+            EpicManager.P2PInterface.CloseConnection(
+                new CloseConnectionOptions
+                {
+                    LocalUserId = EpicManager.AccountId.ProductUserId,
+                    RemoteUserId = clientUserID,
+                    SocketId = new SocketId {SocketName = SocketName}
+                });
         }
 
         /// <summary>
-        ///     Read incoming packets from epic services queue system.
+        ///     Send an internal message through system.
         /// </summary>
-        private void ProcessEpicMessages()
+        /// <param name="target">The steam person we are sending internal message to.</param>
+        /// <param name="type">The type of <see cref="InternalMessage"/> we want to send.</param>
+        internal bool SendInternal(ProductUserId target, InternalMessage type)
         {
-            while (!CancellationToken.IsCancellationRequested && EpicManager.Initialized)
+            return EpicManager.P2PInterface.SendPacket(new SendPacketOptions
             {
-                if(SocketListener == null) continue;
-
-                Result packetSizeResults =
-                    EpicManager.P2PInterface.GetNextReceivedPacketSize(_packetSizeOptions, out uint packetSize);
-
-                if (packetSizeResults != Result.Success)
-                {
-                    if (_enableDebugMode)
-                        DebugLogger.RegularDebugLog(
-                            $"[Common] Reading packet size something went wrong. Results {packetSizeResults}",
-                            LogType.Error);
-
-                    continue;
-                }
-
-                byte[] message = new byte[packetSize];
-
-                Result packetReceivedResults = EpicManager.P2PInterface.ReceivePacket(_receivePacketOptions,
-                    out ProductUserId productUserId,
-                    out SocketId socketId, out byte channel, ref message, out uint bytesWritten);
-
-                switch (packetReceivedResults)
-                {
-                    case Result.Success:
-                        if (_enableDebugMode)
-                            DebugLogger.RegularDebugLog("[Common] No packets found yet.");
-                        break;
-                    case Result.NotFound:
-                        if (_enableDebugMode)
-                            DebugLogger.RegularDebugLog("[Common] No packets found yet.");
-                        continue;
-                    default:
-                        if (_enableDebugMode)
-                            DebugLogger.RegularDebugLog(
-                            $"[Common] Something went wrong reading the packet. Results: {packetReceivedResults}",
-                            LogType.Error);
-                        continue;
-                }
-
-                // This is hard code for now because mirror has no way for us
-                // to determine how many channels they have. In future will need find better way.
-
-                InternalMessage internalMessage;
-
-                switch (channel)
-                {
-                    case 3:
-                        ProcessInternalMessages((InternalMessage)message[0], productUserId);
-                        continue;
-                    default:
-                        internalMessage = InternalMessage.Data;
-                        break;
-                }
-
-                if (_enableDebugMode)
-                    DebugLogger.RegularDebugLog(
-                    $"[Common] Received: {internalMessage} with data {BitConverter.ToString(message)}. Processing it into queue.");
-
-                EpicMessage epicMessage = new EpicMessage(productUserId.InnerHandle.ToInt32(), channel, internalMessage,
-                    message);
-
-                QueuedMessages.Enqueue(epicMessage);
-            }
-        }
-
-        /// <summary>
-        ///     Process queue up messages.
-        /// </summary>
-        protected abstract void ProcessQueuedMessages();
-
-        /// <summary>
-        ///     Process internal messages that have been queued up from us.
-        /// </summary>
-        protected abstract void ProcessInternalMessages(InternalMessage message, ProductUserId userId);
-
-        /// <summary>
-        ///     Send an internal message outside of mirror control.
-        /// </summary>
-        /// <param name="message">The internal message we want to send <see cref="InternalMessage" /></param>
-        /// <param name="user">The user we want to send the <see cref="InternalMessage" /> to.</param>
-        internal Result SendInternalMessage(InternalMessage message, ProductUserId user)
-        {
-            // We hard code to channel 3 because mirror only has 2 channels.
-            // If in future this changed we will need find a better way to handle this.
-            return EpicManager.P2PInterface.SendPacket(CreatePacket(3, new[] {(byte)message}, user));
-        }
-
-        /// <summary>
-        ///     Internal way of creating packets so we don't have to write boiler plate
-        ///     code all over the place every time we want to create a new packet for epic services.
-        /// </summary>
-        /// <param name="channel">The channel we will be sending the data on.</param>
-        /// <param name="message">The message we want to send to epic user.</param>
-        /// <param name="user">The user we want to send message to.</param>
-        /// <returns></returns>
-        internal SendPacketOptions CreatePacket(int channel, byte[] message, ProductUserId user)
-        {
-            var test = new SocketId {SocketName = "Testing"};
-
-            Debug.Log($"Valid : {EpicManager.AccountId.ProductUserId.IsValid()}");
-
-            return new SendPacketOptions
-            {
-                LocalUserId = EpicManager.AccountId.ProductUserId,
-                Channel = (byte)channel,
-                Reliability = ConvertChannel(channel),
-                RemoteUserId = user,
                 AllowDelayedDelivery = true,
-                Data = message,
-                SocketId = test
-            };
+                Channel = (byte)Options.Channels.Length,
+                Data = new[] {(byte)type},
+                LocalUserId = EpicManager.AccountId.ProductUserId,
+                Reliability = PacketReliability.ReliableOrdered,
+                RemoteUserId = target,
+                SocketId = new SocketId {SocketName = SocketName}
+            }) == Result.Success;
         }
 
         /// <summary>
-        ///     Internal struct method for boiler plate saving for
-        ///     closing connections down in epic services.
+        ///     Check to see if we have received any data from steam users.
         /// </summary>
-        /// <param name="productId">The account id to which we want to close connection to.</param>
-        /// <returns>
-        ///     Creates a new <see cref="CloseConnectionOptions" /> struct to be used for closing connections down from epic
-        ///     services.
-        /// </returns>
-        internal CloseConnectionOptions CreateCloseConnectionOptions(ProductUserId productId)
+        /// <param name="clientProductUserId">Returns back the steam id of users who sent message.</param>
+        /// <param name="receiveBuffer">The data that was sent to use.</param>
+        /// <param name="channel">The channel the data was sent on.</param>
+        /// <returns></returns>
+        protected bool DataAvailable(out ProductUserId clientProductUserId, out byte[] receiveBuffer, byte channel)
         {
-            return new CloseConnectionOptions
+            Result result = EpicManager.P2PInterface.ReceivePacket(new ReceivePacketOptions()
             {
                 LocalUserId = EpicManager.AccountId.ProductUserId,
-                RemoteUserId = productId,
-                SocketId = SocketListener
-            };
-        }
+                MaxDataSizeBytes = P2PInterface.MaxPacketSize,
+                RequestedChannel = channel
+            }, out clientProductUserId, out SocketId _, out channel, out receiveBuffer);
 
-        /// <summary>
-        ///     Internal struct method for boiler plate saving for
-        ///     receiving a packet from epic services.
-        /// </summary>
-        /// <returns>Creates a new <see cref="ReceivePacketOptions" /> struct to be used for receiving a packet from epic services.</returns>
-        private ReceivePacketOptions CreateReceivePacketOptions()
-        {
-            return new ReceivePacketOptions
+            if (result == Result.Success)
             {
-                LocalUserId = EpicManager.AccountId.ProductUserId, MaxDataSizeBytes = P2PInterface.MaxPacketSize
-            };
+                return true;
+            }
+
+            receiveBuffer = null;
+            clientProductUserId = null;
+
+            return false;
+        }
+
+        public virtual void Disconnect()
+        {
+            _cancellationToken?.Cancel();
         }
 
         /// <summary>
-        ///     Internal struct method for boiler plate saving for
-        ///     receiving next packet size in epic services.
+        ///     Update method to be called by the transport.
         /// </summary>
-        /// <returns>
-        ///     Creates a new <see cref="GetNextReceivedPacketSizeOptions" /> struct to be used for receiving new packets from
-        ///     epic services.
-        /// </returns>
-        private GetNextReceivedPacketSizeOptions CreateReceivedPacketSizeOptions()
-        {
-            return new GetNextReceivedPacketSizeOptions {LocalUserId = EpicManager.AccountId.ProductUserId};
-        }
+        protected abstract void ProcessIncomingMessages();
 
         /// <summary>
-        ///     Shutdown and cleanup resources.
+        ///     Process our internal messages away from mirror.
         /// </summary>
-        public virtual void Shutdown()
-        {
-            _receivePacketOptions = null;
-            _packetSizeOptions = null;
-        }
+        /// <param name="type">The <see cref="InternalMessage"/> type message we received.</param>
+        /// <param name="clientEpicId">The client id which the internal message came from.</param>
+        protected abstract void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId);
+
+        /// <summary>
+        ///     Process data incoming from steam backend.
+        /// </summary>
+        /// <param name="data">The data that has come in.</param>
+        /// <param name="clientEpicId">The client the data came from.</param>
+        /// <param name="channel">The channel the data was received on.</param>
+        protected abstract void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel);
 
         #endregion
     }

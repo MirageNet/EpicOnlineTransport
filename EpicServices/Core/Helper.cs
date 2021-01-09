@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -20,7 +19,7 @@ namespace Epic.OnlineServices
 	internal class ExternalAllocationException : AllocationException
 	{
 		public ExternalAllocationException(IntPtr address, Type type)
-			: base(string.Format("Attempting to allocate {0} over externally allocated memory at {1:X}", type, address.ToString("X")))
+			: base(string.Format("Attempting to allocate {0} over externally allocated memory at {1}", type, address.ToString("X")))
 		{
 		}
 	}
@@ -36,7 +35,7 @@ namespace Epic.OnlineServices
 	internal class ArrayAllocationException : AllocationException
 	{
 		public ArrayAllocationException(IntPtr address, int foundLength, int expectedLength)
-			: base(string.Format("Found array allocation with length {0} but expected {1} at {2:X}", foundLength, expectedLength, address.ToString("X")))
+			: base(string.Format("Found array allocation with length {0} but expected {1} at {2}", foundLength, expectedLength, address.ToString("X")))
 		{
 		}
 	}
@@ -67,19 +66,20 @@ namespace Epic.OnlineServices
 		{
 			public Delegate Public { get; private set; }
 			public Delegate Private { get; private set; }
-			public Delegate[] Additional { get; private set; }
+			public Delegate[] StructDelegates { get; private set; }
 			public ulong? NotificationId { get; set; }
 
-			public DelegateHolder(Delegate publicDelegate, Delegate privateDelegate, params Delegate[] additionalDelegates)
+			public DelegateHolder(Delegate publicDelegate, Delegate privateDelegate, params Delegate[] structDelegates)
 			{
 				Public = publicDelegate;
 				Private = privateDelegate;
-				Additional = additionalDelegates;
+				StructDelegates = structDelegates;
 			}
 		}
 
 		private static Dictionary<IntPtr, Allocation> s_Allocations = new Dictionary<IntPtr, Allocation>();
 		private static Dictionary<IntPtr, DelegateHolder> s_Callbacks = new Dictionary<IntPtr, DelegateHolder>();
+		private static Dictionary<string, DelegateHolder> s_StaticCallbacks = new Dictionary<string, DelegateHolder>();
 
 		/// <summary>
 		/// Gets the number of unmanaged allocations currently active within the wrapper. Use this to find leaks related to the usage of wrapper code.
@@ -99,7 +99,7 @@ namespace Epic.OnlineServices
 		{
 			int isOperationCompleteInt = EOS_EResult_IsOperationComplete(result);
 
-			bool isOperationComplete = false;
+			bool isOperationComplete;
 			TryMarshalGet(isOperationCompleteInt, out isOperationComplete);
 			return isOperationComplete;
 		}
@@ -120,22 +120,13 @@ namespace Epic.OnlineServices
 		// These functions are the front end when changing SDK values into wrapper values.
 		// They will either fetch or convert; whichever is most appropriate for the source and target types.
 		#region Marshal Getters
-		internal static bool TryMarshalGet<T>(T source, out T target)
+		internal static bool TryMarshalGet<T>(T[] source, out uint target)
 		{
-			target = source;
-
-			return true;
-		}
-
-		internal static bool TryMarshalGet(IntPtr source, out IntPtr target)
-		{
-			target = source;
-
-			return true;
+			return TryConvert(source, out target);
 		}
 
 		internal static bool TryMarshalGet<T>(IntPtr source, out T target)
-			where T : Handle
+			where T : Handle, new()
 		{
 			return TryConvert(source, out target);
 		}
@@ -168,6 +159,36 @@ namespace Epic.OnlineServices
 		internal static bool TryMarshalGet<T>(IntPtr source, out T[] target, uint arrayLength)
 		{
 			return TryMarshalGet(source, out target, arrayLength, !typeof(T).IsValueType);
+		}
+
+		internal static bool TryMarshalGet<TSource, TTarget>(TSource[] source, out TTarget[] target)
+			where TSource : struct
+			where TTarget : class, ISettable, new()
+		{
+			return TryConvert(source, out target);
+		}
+
+		internal static bool TryMarshalGet<TSource, TTarget>(IntPtr source, out TTarget[] target, int arrayLength)
+			where TSource : struct
+			where TTarget : class, ISettable, new()
+		{
+			target = GetDefault<TTarget[]>();
+
+			TSource[] intermediateSource;
+			if (TryMarshalGet(source, out intermediateSource, arrayLength))
+			{
+				return TryMarshalGet(intermediateSource, out target);
+			}
+
+			return false;
+		}
+
+		internal static bool TryMarshalGet<TSource, TTarget>(IntPtr source, out TTarget[] target, uint arrayLength)
+			where TSource : struct
+			where TTarget : class, ISettable, new()
+		{
+			int arrayLengthInt = (int)arrayLength;
+			return TryMarshalGet<TSource, TTarget>(source, out target, arrayLengthInt);
 		}
 
 		internal static bool TryMarshalGet<T>(IntPtr source, out T? target)
@@ -213,6 +234,23 @@ namespace Epic.OnlineServices
 			return false;
 		}
 
+		internal static bool TryMarshalGet<TEnum>(int source, out bool? target, TEnum currentEnum, TEnum comparisonEnum)
+		{
+			target = GetDefault<bool?>();
+
+			if ((int)(object)currentEnum == (int)(object)comparisonEnum)
+			{
+				bool targetConvert;
+				if (TryConvert(source, out targetConvert))
+				{
+					target = targetConvert;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
 		internal static bool TryMarshalGet<T, TEnum>(T source, out T? target, TEnum currentEnum, TEnum comparisonEnum)
 			where T : struct
 		{
@@ -228,7 +266,7 @@ namespace Epic.OnlineServices
 		}
 
 		internal static bool TryMarshalGet<T, TEnum>(IntPtr source, out T target, TEnum currentEnum, TEnum comparisonEnum)
-			where T : Handle
+			where T : Handle, new()
 		{
 			target = GetDefault<T>();
 
@@ -252,16 +290,20 @@ namespace Epic.OnlineServices
 			return false;
 		}
 
-		internal static bool TryMarshalGet<TEnum>(int source, out bool? target, TEnum currentEnum, TEnum comparisonEnum)
+		internal static bool TryMarshalGet<TInternal, TPublic>(IntPtr source, out TPublic target)
+			where TInternal : struct
+			where TPublic : class, ISettable, new()
 		{
-			target = GetDefault<bool?>();
+			target = GetDefault<TPublic>();
 
-			if ((int)(object)currentEnum == (int)(object)comparisonEnum)
+			TInternal? targetInternal;
+			if (TryMarshalGet(source, out targetInternal))
 			{
-				bool targetConvert;
-				if (TryConvert(source, out targetConvert))
+				if (targetInternal.HasValue)
 				{
-					target = targetConvert;
+					target = new TPublic();
+					target.Set(targetInternal);
+
 					return true;
 				}
 			}
@@ -269,26 +311,18 @@ namespace Epic.OnlineServices
 			return false;
 		}
 
-		internal static bool TryMarshalGet<TInternal, TPublic>(IntPtr source, out TPublic target)
+		internal static bool TryMarshalGet<TInternal, TPublic>(TInternal source, out TPublic target)
 			where TInternal : struct
-			where TPublic : class, new()
+			where TPublic : class, ISettable, new()
 		{
-			target = null;
-
-			TInternal sourceObject;
-			if (TryFetch(source, out sourceObject))
-			{
-				target = CopyProperties<TPublic>(sourceObject);
-
-				return true;
-			}
-
-			return false;
+			target = new TPublic();
+			target.Set(source);
+			return true;
 		}
 
 		internal static bool TryMarshalGet<TCallbackInfoInternal, TCallbackInfo>(IntPtr callbackInfoAddress, out TCallbackInfo callbackInfo, out IntPtr clientDataAddress)
-			where TCallbackInfoInternal : struct, ICallbackInfo
-			where TCallbackInfo : class, new()
+			where TCallbackInfoInternal : struct, ICallbackInfoInternal
+			where TCallbackInfo : class, ISettable, new()
 		{
 			callbackInfo = null;
 			clientDataAddress = IntPtr.Zero;
@@ -296,7 +330,8 @@ namespace Epic.OnlineServices
 			TCallbackInfoInternal callbackInfoInternal;
 			if (TryFetch(callbackInfoAddress, out callbackInfoInternal))
 			{
-				callbackInfo = CopyProperties<TCallbackInfo>(callbackInfoInternal);
+				callbackInfo = new TCallbackInfo();
+				callbackInfo.Set(callbackInfoInternal);
 				clientDataAddress = callbackInfoInternal.ClientDataAddress;
 
 				return true;
@@ -314,6 +349,12 @@ namespace Epic.OnlineServices
 			target = source;
 
 			return true;
+		}
+
+		internal static bool TryMarshalSet<TTarget>(ref TTarget target, object source)
+			where TTarget : ISettable, new()
+		{
+			return TryConvert(source, out target);
 		}
 
 		internal static bool TryMarshalSet(ref IntPtr target, Handle source)
@@ -364,11 +405,6 @@ namespace Epic.OnlineServices
 			return false;
 		}
 
-		internal static bool TryMarshalSet<T>(ref IntPtr target, T[] source, out int arrayLength)
-		{
-			return TryMarshalSet(ref target, source, out arrayLength, !typeof(T).IsValueType);
-		}
-
 		internal static bool TryMarshalSet<T>(ref IntPtr target, T[] source, out uint arrayLength)
 		{
 			return TryMarshalSet(ref target, source, out arrayLength, !typeof(T).IsValueType);
@@ -384,11 +420,6 @@ namespace Epic.OnlineServices
 			return TryConvert(source, out target);
 		}
 
-		internal static bool TryMarshalSet(ref byte[] target, string source)
-		{
-			return TryConvert(source, out target);
-		}
-
 		internal static bool TryMarshalSet(ref byte[] target, string source, int length)
 		{
 			return TryConvert(source, out target, length);
@@ -399,7 +430,7 @@ namespace Epic.OnlineServices
 			return TryAllocate(ref target, source);
 		}
 
-		internal static bool TryMarshalSet<T, TEnum>(ref T target, T source, ref TEnum currentEnum, TEnum comparisonEnum, object disposable)
+		internal static bool TryMarshalSet<T, TEnum>(ref T target, T source, ref TEnum currentEnum, TEnum comparisonEnum, IDisposable disposable = null)
 		{
 			if (source != null)
 			{
@@ -415,7 +446,7 @@ namespace Epic.OnlineServices
 			return false;
 		}
 
-		internal static bool TryMarshalSet<T, TEnum>(ref T target, T? source, ref TEnum currentEnum, TEnum comparisonEnum, object disposable)
+		internal static bool TryMarshalSet<T, TEnum>(ref T target, T? source, ref TEnum currentEnum, TEnum comparisonEnum, IDisposable disposable = null)
 			where T : struct
 		{
 			if (source != null)
@@ -432,8 +463,7 @@ namespace Epic.OnlineServices
 			return true;
 		}
 
-		internal static bool TryMarshalSet<T, TEnum>(ref IntPtr target, T source, ref TEnum currentEnum, TEnum comparisonEnum, object disposable)
-			where T : Handle
+		internal static bool TryMarshalSet<TEnum>(ref IntPtr target, Handle source, ref TEnum currentEnum, TEnum comparisonEnum, IDisposable disposable = null)
 		{
 			if (source != null)
 			{
@@ -449,10 +479,13 @@ namespace Epic.OnlineServices
 			return true;
 		}
 
-		internal static bool TryMarshalSet<TEnum>(ref IntPtr target, string source, ref TEnum currentEnum, TEnum comparisonEnum, object disposable)
+		internal static bool TryMarshalSet<TEnum>(ref IntPtr target, string source, ref TEnum currentEnum, TEnum comparisonEnum, IDisposable disposable = null)
 		{
 			if (source != null)
 			{
+				TryMarshalDispose(ref target);
+				target = IntPtr.Zero;
+
 				TryMarshalDispose(ref disposable);
 
 				if (TryMarshalSet(ref target, source))
@@ -465,7 +498,7 @@ namespace Epic.OnlineServices
 			return true;
 		}
 
-		internal static bool TryMarshalSet<TEnum>(ref int target, bool? source, ref TEnum currentEnum, TEnum comparisonEnum, object disposable)
+		internal static bool TryMarshalSet<TEnum>(ref int target, bool? source, ref TEnum currentEnum, TEnum comparisonEnum, IDisposable disposable = null)
 		{
 			if (source != null)
 			{
@@ -481,13 +514,138 @@ namespace Epic.OnlineServices
 			return true;
 		}
 
+		internal static bool TryMarshalSet<TInternal, TPublic>(ref IntPtr target, TPublic source)
+			where TInternal : struct, ISettable
+			where TPublic : class
+		{
+			if (source != null)
+			{
+				TInternal targetInternal = new TInternal();
+				targetInternal.Set(source);
+
+				if (TryAllocate(ref target, targetInternal))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		internal static bool TryMarshalSet<TInternal, TPublic>(ref IntPtr target, TPublic[] source, out int arrayLength)
+			where TInternal : struct, ISettable
+			where TPublic : class
+		{
+			arrayLength = 0;
+
+			if (source != null)
+			{
+				TInternal[] targetInternal = new TInternal[source.Length];
+				for (int index = 0; index < source.Length; ++index)
+				{
+					targetInternal[index].Set(source[index]);
+				}
+
+				if (TryMarshalSet(ref target, targetInternal))
+				{
+					arrayLength = source.Length;
+					return true;
+				}
+
+			}
+
+			return false;
+		}
+
+		internal static bool TryMarshalSet<TInternal, TPublic>(ref IntPtr target, TPublic[] source, out uint arrayLength)
+			where TInternal : struct, ISettable
+			where TPublic : class
+		{
+			arrayLength = 0;
+
+			int arrayLengthInt;
+			if (TryMarshalSet<TInternal, TPublic>(ref target, source, out arrayLengthInt))
+			{
+				arrayLength = (uint)arrayLengthInt;
+				return true;
+			}
+
+			return false;
+		}
+
+		internal static bool TryMarshalSet<TInternal, TPublic>(ref IntPtr target, TPublic[] source, out int arrayLength, bool isElementAllocated)
+			where TInternal : struct, ISettable
+			where TPublic : class
+		{
+			arrayLength = 0;
+
+			if (source != null)
+			{
+				TInternal[] targetInternal = new TInternal[source.Length];
+				for (int index = 0; index < source.Length; ++index)
+				{
+					targetInternal[index].Set(source[index]);
+				}
+
+				if (TryMarshalSet(ref target, targetInternal, isElementAllocated))
+				{
+					arrayLength = source.Length;
+					return true;
+				}
+
+			}
+
+			return false;
+		}
+
+		internal static bool TryMarshalSet<TInternal, TPublic>(ref IntPtr target, TPublic[] source, out uint arrayLength, bool isElementAllocated)
+			where TInternal : struct, ISettable
+			where TPublic : class
+		{
+			arrayLength = 0;
+
+			int arrayLengthInt;
+			if (TryMarshalSet<TInternal, TPublic>(ref target, source, out arrayLengthInt, isElementAllocated))
+			{
+				arrayLength = (uint)arrayLengthInt;
+				return true;
+			}
+
+			return false;
+		}
+
+		internal static bool TryMarshalCopy(IntPtr target, byte[] source)
+		{
+			if (target != IntPtr.Zero && source != null)
+			{
+				Marshal.Copy(source, 0, target, source.Length);
+				return true;
+			}
+
+			return false;
+		}
+
+		internal static bool TryMarshalAllocate(ref IntPtr target, int length)
+		{
+			TryMarshalDispose(ref target);
+
+			target = Marshal.AllocHGlobal(length);
+			Marshal.WriteByte(target, 0, 0);
+
+			return true;
+		}
+
+		internal static bool TryMarshalAllocate(ref IntPtr target, uint length)
+		{
+			return TryMarshalAllocate(ref target, (int)length);
+		}
 		#endregion
 
 		// These functions are the front end for disposing of unmanaged memory that this wrapper has allocated.
 		#region Marshal Disposers
-		internal static bool TryMarshalDispose(ref object value)
+		internal static bool TryMarshalDispose<TDisposable>(ref TDisposable disposable)
+			where TDisposable : IDisposable
 		{
-			var disposable = value as IDisposable;
 			if (disposable != null)
 			{
 				disposable.Dispose();
@@ -495,13 +653,6 @@ namespace Epic.OnlineServices
 			}
 
 			return false;
-		}
-
-		internal static bool TryMarshalDispose<T>(ref T value)
-			where T : IDisposable
-		{
-			value.Dispose();
-			return true;
 		}
 
 		internal static bool TryMarshalDispose(ref IntPtr value)
@@ -527,25 +678,15 @@ namespace Epic.OnlineServices
 			return default(T);
 		}
 
-		internal static T CopyProperties<T>(object value) where T : new()
+		internal static void AddCallback(ref IntPtr clientDataAddress, object clientData, Delegate publicDelegate, Delegate privateDelegate, params Delegate[] structDelegates)
 		{
-			object valueBoxed = new T();
-
-			var initiailizable = valueBoxed as IInitializable;
-			if (initiailizable != null)
-			{
-				initiailizable.Initialize();
-			}
-
-			CopyProperties(value, valueBoxed);
-
-			return (T)valueBoxed;
+			TryAllocateCacheOnly(ref clientDataAddress, new BoxedData(clientData));
+			s_Callbacks.Add(clientDataAddress, new DelegateHolder(publicDelegate, privateDelegate, structDelegates));
 		}
 
-		internal static void AddCallback(ref IntPtr clientDataAddress, object clientData, Delegate publicDelegate, Delegate privateDelegate, params Delegate[] additionalDelegates)
+		internal static void AddStaticCallback(string key, Delegate publicDelegate, Delegate privateDelegate)
 		{
-			TryAllocate(ref clientDataAddress, new BoxedData(clientData));
-			s_Callbacks.Add(clientDataAddress, new DelegateHolder(publicDelegate, privateDelegate, additionalDelegates));
+			s_StaticCallbacks[key] = new DelegateHolder(publicDelegate, privateDelegate);
 		}
 
 		internal static bool TryAssignNotificationIdToCallback(IntPtr clientDataAddress, ulong notificationId)
@@ -587,8 +728,8 @@ namespace Epic.OnlineServices
 
 		internal static bool TryGetAndRemoveCallback<TCallback, TCallbackInfoInternal, TCallbackInfo>(IntPtr callbackInfoAddress, out TCallback callback, out TCallbackInfo callbackInfo)
 			where TCallback : class
-			where TCallbackInfoInternal : struct, ICallbackInfo
-			where TCallbackInfo : class, new()
+			where TCallbackInfoInternal : struct, ICallbackInfoInternal
+			where TCallbackInfo : class, ICallbackInfo, ISettable, new()
 		{
 			callback = null;
 			callbackInfo = null;
@@ -603,17 +744,17 @@ namespace Epic.OnlineServices
 			return false;
 		}
 
-		internal static bool TryGetAdditionalCallback<TDelegate, TCallbackInfoInternal, TCallbackInfo>(IntPtr callbackInfoAddress, out TDelegate callback, out TCallbackInfo callbackInfo)
+		internal static bool TryGetStructCallback<TDelegate, TCallbackInfoInternal, TCallbackInfo>(IntPtr callbackInfoAddress, out TDelegate callback, out TCallbackInfo callbackInfo)
 			where TDelegate : class
-			where TCallbackInfoInternal : struct, ICallbackInfo
-			where TCallbackInfo : class, new()
+			where TCallbackInfoInternal : struct, ICallbackInfoInternal
+			where TCallbackInfo : class, ISettable, new()
 		{
 			callback = null;
 			callbackInfo = null;
 
 			IntPtr clientDataAddress = IntPtr.Zero;
 			if (TryMarshalGet<TCallbackInfoInternal, TCallbackInfo>(callbackInfoAddress, out callbackInfo, out clientDataAddress)
-				&& TryGetAdditionalCallback(clientDataAddress, out callback))
+				&& TryGetStructCallback(clientDataAddress, out callback))
 			{
 				return true;
 			}
@@ -639,7 +780,7 @@ namespace Epic.OnlineServices
 				return false;
 			}
 
-			target = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(T)));
+			TryMarshalAllocate(ref target, Marshal.SizeOf(typeof(T)));
 			Marshal.StructureToPtr(source, target, false);
 			s_Allocations.Add(target, new Allocation(source));
 
@@ -712,7 +853,7 @@ namespace Epic.OnlineServices
 			}
 
 			// Allocate the array
-			target = Marshal.AllocHGlobal(source.Length * itemSize);
+			TryMarshalAllocate(ref target, source.Length * itemSize);
 			s_Allocations.Add(target, new ArrayAllocation(source, isElementAllocated));
 
 			for (int itemIndex = 0; itemIndex < source.Length; ++itemIndex)
@@ -748,6 +889,27 @@ namespace Epic.OnlineServices
 					Marshal.StructureToPtr(item, itemAddress, false);
 				}
 			}
+
+			return true;
+		}
+
+		private static bool TryAllocateCacheOnly<T>(ref IntPtr target, T source)
+		{
+			TryRelease(ref target);
+
+			if (target != IntPtr.Zero)
+			{
+				throw new ExternalAllocationException(target, source.GetType());
+			}
+
+			if (source == null)
+			{
+				return false;
+			}
+
+			// The source should always be fetched directly from our cache, so the allocation is arbitrary.
+			TryMarshalAllocate(ref target, 1);
+			s_Allocations.Add(target, new Allocation(source));
 
 			return true;
 		}
@@ -973,13 +1135,28 @@ namespace Epic.OnlineServices
 		// They should not be exposed outside of this helper.
 		#region Private Converters
 		private static bool TryConvert<THandle>(IntPtr source, out THandle target)
-			where THandle : Handle
+			where THandle : Handle, new()
 		{
 			target = null;
 
 			if (source != IntPtr.Zero)
 			{
-				target = Activator.CreateInstance(typeof(THandle), source) as THandle;
+				target = new THandle();
+				target.InnerHandle = source;
+			}
+
+			return true;
+		}
+
+		internal static bool TryConvert<TSource, TTarget>(TSource source, out TTarget target)
+			where TTarget : ISettable, new()
+		{
+			target = GetDefault<TTarget>();
+
+			if (source != null)
+			{
+				target = new TTarget();
+				target.Set(source);
 			}
 
 			return true;
@@ -1039,6 +1216,51 @@ namespace Epic.OnlineServices
 			return TryConvert(source, out target, source.Length + 1);
 		}
 
+		private static bool TryConvert<T>(T[] source, out int target)
+		{
+			target = 0;
+
+			if (source != null)
+			{
+				target = source.Length;
+			}
+
+			return true;
+		}
+
+		private static bool TryConvert<T>(T[] source, out uint target)
+		{
+			target = 0;
+
+			int targetInt;
+			if (TryConvert(source, out targetInt))
+			{
+				target = (uint)targetInt;
+				return true;
+			}
+
+			return false;
+		}
+
+		internal static bool TryConvert<TSource, TTarget>(TSource[] source, out TTarget[] target)
+			where TTarget : ISettable, new()
+		{
+			target = GetDefault<TTarget[]>();
+
+			if (source != null)
+			{
+				target = new TTarget[source.Length];
+
+				for (int index = 0; index < source.Length; ++index)
+				{
+					target[index] = new TTarget();
+					target[index].Set(source[index]);
+				}
+			}
+
+			return true;
+		}
+		
 		private static bool TryConvert(int source, out bool target)
 		{
 			target = source != 0;
@@ -1085,82 +1307,8 @@ namespace Epic.OnlineServices
 
 		// These functions exist to further streamline blocks of generated code.
 		#region Private Helpers
-		private static void CopyProperties(object source, object target)
-		{
-			if (source == null || target == null)
-			{
-				return;
-			}
-
-			var sourceProperties = source.GetType().GetProperties(BindingFlags.Public | BindingFlags.SetProperty | BindingFlags.Instance);
-			var targetProperties = target.GetType().GetProperties(BindingFlags.Public | BindingFlags.SetProperty | BindingFlags.Instance);
-
-			foreach (var sourceProperty in sourceProperties)
-			{
-				var targetProperty = targetProperties.SingleOrDefault(property => property.Name == sourceProperty.Name);
-				if (targetProperty == null || targetProperty.GetSetMethod(false) == null)
-				{
-					continue;
-				}
-
-				// If the property types are the same, we can simply copy
-				if (sourceProperty.PropertyType == targetProperty.PropertyType)
-				{
-					targetProperty.SetValue(target, sourceProperty.GetValue(source, null), null);
-				}
-				// If it's an array, we need to copy the properties of each item
-				else if (targetProperty.PropertyType.IsArray)
-				{
-					var sourceArray = sourceProperty.GetValue(source, null) as Array;
-
-					if (sourceArray != null)
-					{
-						var targetArray = Array.CreateInstance(targetProperty.PropertyType.GetElementType(), sourceArray.Length);
-
-						for (int index = 0; index < sourceArray.Length; ++index)
-						{
-							var sourceItem = sourceArray.GetValue(index);
-							var targetItem = Activator.CreateInstance(targetProperty.PropertyType.GetElementType());
-							CopyProperties(sourceItem, targetItem);
-							targetArray.SetValue(targetItem, index);
-						}
-
-						targetProperty.SetValue(target, targetArray, null);
-					}
-					else
-					{
-						targetProperty.SetValue(target, null, null);
-					}
-				}
-				// Otherwise, we have to instantiate the target type and copy the properties
-				else
-				{
-					object targetInstance = null;
-
-					Type typeToInstantiate = targetProperty.PropertyType;
-					Type nullableType = Nullable.GetUnderlyingType(typeToInstantiate);
-					if (nullableType != null)
-					{
-						typeToInstantiate = nullableType;
-					}
-					else
-					{
-						targetInstance = Activator.CreateInstance(typeToInstantiate);
-					}
-
-					object sourcePropertyValue = sourceProperty.GetValue(source, null);
-					if (sourcePropertyValue != null)
-					{
-						targetInstance = Activator.CreateInstance(typeToInstantiate);
-						CopyProperties(sourcePropertyValue, targetInstance);
-					}
-
-					targetProperty.SetValue(target, targetInstance, null);
-				}
-			}
-		}
-
-		private static bool CanRemoveCallback(IntPtr clientDataAddress, object callbackInfo)
+		private static bool CanRemoveCallback<TCallbackInfo>(IntPtr clientDataAddress, TCallbackInfo callbackInfo)
+			where TCallbackInfo : ICallbackInfo
 		{
 			DelegateHolder delegateHolder = null;
 			if (s_Callbacks.TryGetValue(clientDataAddress, out delegateHolder))
@@ -1171,46 +1319,64 @@ namespace Epic.OnlineServices
 				}
 			}
 
-			var resultProperty = callbackInfo.GetType().GetProperties(BindingFlags.Public | BindingFlags.GetProperty | BindingFlags.Instance).Where(property => property.PropertyType == typeof(Result)).FirstOrDefault();
-			if (resultProperty != null)
+			if (callbackInfo.GetResultCode().HasValue)
 			{
-				var result = (Result)resultProperty.GetValue(callbackInfo, null);
-				return IsOperationComplete(result);
+				return IsOperationComplete(callbackInfo.GetResultCode().Value);
 			}
 
 			return true;
 		}
 
-		private static bool TryGetAndRemoveCallback<TCallback>(IntPtr clientDataAddress, object callbackInfo, out TCallback callback)
+		private static bool TryGetAndRemoveCallback<TCallback, TCallbackInfo>(IntPtr clientDataAddress, TCallbackInfo callbackInfo, out TCallback callback)
 			where TCallback : class
+			where TCallbackInfo : ICallbackInfo
 		{
 			callback = null;
 
 			if (clientDataAddress != IntPtr.Zero && s_Callbacks.ContainsKey(clientDataAddress))
 			{
 				callback = s_Callbacks[clientDataAddress].Public as TCallback;
-
-				if (CanRemoveCallback(clientDataAddress, callbackInfo))
+				if (callback != null)
 				{
-					s_Callbacks.Remove(clientDataAddress);
-					TryRelease(ref clientDataAddress);
-				}
+					if (CanRemoveCallback(clientDataAddress, callbackInfo))
+					{
+						s_Callbacks.Remove(clientDataAddress);
+						TryRelease(ref clientDataAddress);
+					}
 
-				return true;
+					return true;
+				}
 			}
 
 			return false;
 		}
 
-		private static bool TryGetAdditionalCallback<TCallback>(IntPtr clientDataAddress, out TCallback additionalCallback)
+		internal static bool TryGetStaticCallback<TCallback>(string key, out TCallback callback)
 			where TCallback : class
 		{
-			additionalCallback = null;
+			callback = null;
+
+			if (s_StaticCallbacks.ContainsKey(key))
+			{
+				callback = s_StaticCallbacks[key].Public as TCallback;
+				if (callback != null)
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool TryGetStructCallback<TCallback>(IntPtr clientDataAddress, out TCallback structCallback)
+			where TCallback : class
+		{
+			structCallback = null;
 
 			if (clientDataAddress != IntPtr.Zero && s_Callbacks.ContainsKey(clientDataAddress))
 			{
-				additionalCallback = s_Callbacks[clientDataAddress].Additional.FirstOrDefault(delegat => delegat.GetType() == typeof(TCallback)) as TCallback;
-				if (additionalCallback != null)
+				structCallback = s_Callbacks[clientDataAddress].StructDelegates.FirstOrDefault(delegat => delegat.GetType() == typeof(TCallback)) as TCallback;
+				if (structCallback != null)
 				{
 					return true;
 				}

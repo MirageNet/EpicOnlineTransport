@@ -1,10 +1,12 @@
 {
     "name": "Epic.Transport",
+    "rootNamespace": "EpicTransport",
     "references": [
         "GUID:30817c1a0e6d646d99c048fc403f5979",
         "GUID:5f8e4d4b8b76b434186e4594b80e3e42",
         "GUID:2d56943247592a34a9fe486cdda63f7c",
-        "GUID:fb9fe9f3530579e45b8c67d4ba552db5"
+        "GUID:fb9fe9f3530579e45b8c67d4ba552db5",
+        "GUID:f51ebe6a0ceec4240a699833d6309b23"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

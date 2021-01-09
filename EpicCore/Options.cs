@@ -4,7 +4,7 @@ using System;
 
 #endregion
 
-namespace EpicChill.EpicCore
+namespace Epic.Core
 {
     [Serializable]
     public struct Options
