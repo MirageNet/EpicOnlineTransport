@@ -12,10 +12,12 @@ namespace Epic.Core
 
         /// <summary>
         /// </summary>
+        /// <param name="epicAccountId"></param>
         /// <param name="productId"></param>
-        public EpicUser(ProductUserId productId)
+        public EpicUser(EpicAccountId epicAccountId, ProductUserId productId)
         {
             ProductUserId = productId;
+            EpicAccountId = epicAccountId;
         }
 
         #endregion
@@ -26,6 +28,8 @@ namespace Epic.Core
         /// 
         /// </summary>
         public ProductUserId ProductUserId { get; private set; }
+
+        public EpicAccountId EpicAccountId { get; private set; }
 
         /// <summary>
         /// </summary>
