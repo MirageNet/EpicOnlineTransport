@@ -65,7 +65,10 @@ namespace EpicTransport
             {
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 RemoteUserId = result.RemoteUserId,
-                SocketId = new SocketId {SocketName = SocketName}
+                SocketId = new SocketId
+                {
+                    SocketName = SocketName
+                }
             });
         }
 

@@ -118,6 +118,8 @@ namespace EpicTransport
         /// <returns></returns>
         public override async UniTask<IConnection> ConnectAsync(Uri uri)
         {
+            _epicOptions.ConnectionAddress = ProductUserId.FromString(uri.Host);
+
             _client = new Client(this, _epicOptions);
 
             _client.Error += (errorCode, message) => Error?.Invoke(errorCode, message);
@@ -135,7 +137,7 @@ namespace EpicTransport
         {
             var steamBuilder = new UriBuilder
             {
-                Scheme = "steam",
+                Scheme = "epic",
                 Host = EpicManager.AccountId.ProductUserId.ToString()
             };
 

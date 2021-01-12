@@ -1,6 +1,5 @@
 #region Statements
 
-using System;
 using Cysharp.Threading.Tasks;
 using Epic.Logging;
 using Epic.OnlineServices;
@@ -34,22 +33,23 @@ namespace Epic.Core
 
         [Header("Debug Information")]
         [SerializeField] private bool _enableDebugLogs;
-#if UNITY_EDITOR
+        [SerializeField] private bool _authInterfaceLogin = false;
+        [SerializeField] private ExternalCredentialType _connectInterfaceCredentialType = ExternalCredentialType.DeviceidAccessToken;
+        [SerializeField] private LoginCredentialType _authInterfaceCredentialType = LoginCredentialType.AccountPortal;
         [SerializeField, Tooltip("Set this to the port you are using the dev auth tool on.")] private int _devAuthToolPort = 7777;
         [SerializeField, Tooltip("The name you set for dev auth tool after login.")]
         private string _devAuthToolName = "";
-#endif
+        [SerializeField, Tooltip("The name you want the fake creation of new users on the fly to be.")] private string displayName = "User";
 
         [Header("Epic Product Settings")]
-        [SerializeField] private Options _options = new Options();
+        [SerializeField] private Options _options;
 
         [Header("Epic Manager Settings.")]
         [SerializeField, Range(.1f, .5f)] private float _tickTime = .1f;
 
-        [SerializeField, Tooltip("If epic account login fails create new device specific account.")] private bool _useDeviceAccountCreation = true;
-
-        public Action UserLoggedIn;
-        public Action UserLoggedOut;
+        private string _authInterfaceLoginCredentialId = string.Empty;
+        private string _authInterfaceCredentialToken = string.Empty;
+        private string _connectInterfaceCredentialToken = string.Empty;
 
         #endregion
 
@@ -162,7 +162,7 @@ namespace Epic.Core
         public void OnDestroy()
         {
             if (_enableDebugLogs)
-                DebugLogger.RegularDebugLog("Releasing epic resources and shutting down epic services.");
+                DebugLogger.RegularDebugLog("[EpicManager] - Releasing epic resources and shutting down epic services.");
 
             if (!Application.isEditor && Platform != null)
             {
@@ -183,7 +183,7 @@ namespace Epic.Core
         private void Initialize()
         {
             if (_enableDebugLogs)
-                DebugLogger.RegularDebugLog("Initializing epic services.");
+                DebugLogger.RegularDebugLog("[EpicManager] - Initializing epic services.");
 
             InitializeOptions initializeOptions =
                 new InitializeOptions {ProductName = _options.ProductName, ProductVersion = _options.ProductVersion};
@@ -195,7 +195,7 @@ namespace Epic.Core
 
             if (initializeResult != Result.Success && !isAlreadyConfiguredInEditor)
             {
-                throw new System.Exception("Failed to initialize platform: " + initializeResult);
+                throw new System.Exception("[EpicManager] - Failed to initialize platform: " + initializeResult);
             }
 
             if (_enableDebugLogs)
@@ -222,18 +222,58 @@ namespace Epic.Core
             if (Platform != null)
             {
                 if (_enableDebugLogs)
-                    DebugLogger.RegularDebugLog("Initialization of epic services complete.");
+                    DebugLogger.RegularDebugLog("[EpicManager] - Initialization of epic services complete.");
 
                 // Process epic services in a separate task.
                 _ = UniTask.Run(Tick);
 
-                LoginEpicAccountUser();
+                // If we use the Auth interface then only login into the Connect interface after finishing the auth interface login
+                // If we don't use the Auth interface we can directly login to the Connect interface
+                if (_authInterfaceLogin)
+                {
+                    if (_authInterfaceCredentialType == LoginCredentialType.Developer)
+                    {
+                        _authInterfaceLoginCredentialId = $"localhost:{_devAuthToolPort}";
+                        _authInterfaceCredentialToken = _devAuthToolName;
+                    }
+
+                    // Login to Auth Interface
+                    LoginOptions loginOptions = new LoginOptions
+                    {
+                        Credentials = new OnlineServices.Auth.Credentials
+                        {
+                            Type = _authInterfaceCredentialType,
+                            Id = _authInterfaceLoginCredentialId,
+                            Token = _authInterfaceCredentialToken
+                        },
+                        ScopeFlags = AuthScopeFlags.BasicProfile | AuthScopeFlags.FriendsList | AuthScopeFlags.Presence
+                    };
+
+                    AuthInterface.Login(loginOptions, null, OnAuthInterfaceLogin);
+                }
+                else
+                {
+                    // Login to Connect Interface
+                    if (_connectInterfaceCredentialType == ExternalCredentialType.DeviceidAccessToken)
+                    {
+                        CreateDeviceIdOptions createDeviceIdOptions =
+                            new CreateDeviceIdOptions
+                            {
+                                DeviceModel = Application.platform.ToString()
+                            };
+                        ConnectInterface.CreateDeviceId(createDeviceIdOptions, null, OnCreateDeviceId);
+                    }
+                    else
+                    {
+                        ConnectInterfaceLogin();
+                    }
+                }
 
                 return;
             }
 
             DebugLogger.RegularDebugLog(
-                $"Failed to create platform. Ensure the relevant {typeof(Options)} are set or passed into the application as arguments.");
+                $"[EpicManager] - Failed to create platform. Ensure the relevant {typeof(Options)} are set or passed into the application as arguments.");
         }
 
         /// <summary>
@@ -249,201 +289,135 @@ namespace Epic.Core
             }
         }
 
-
         /// <summary>
-        ///     Allows usage of connecting to epic services using an epic account.
+        /// 
         /// </summary>
-        private void LoginEpicAccountUser()
+        /// <param name="loginCallbackInfo"></param>
+        private void OnAuthInterfaceLogin(OnlineServices.Auth.LoginCallbackInfo loginCallbackInfo)
         {
-            LoginOptions EpicLoginOptions = new LoginOptions
-            {
-                Credentials = new OnlineServices.Auth.Credentials
-                {
-#if UNITY_EDITOR
-                    Type = LoginCredentialType.Developer, Id = $"localhost:{_devAuthToolPort}", Token = _devAuthToolName
-#else
-                    Type = LoginCredentialType.AccountPortal,
-#endif
-                },
-                ScopeFlags = AuthScopeFlags.BasicProfile | AuthScopeFlags.FriendsList | AuthScopeFlags.Presence
-            };
-
-            AuthInterface.Login(EpicLoginOptions, null, AuthLoginCallback);
-        }
-
-        /// <summary>
-        ///     The authentication process has return back information
-        ///     of successful or non successful authentication of epic account.
-        /// </summary>
-        /// <param name="data">The data we received back from our callback.</param>
-        private void AuthLoginCallback(OnlineServices.Auth.LoginCallbackInfo data)
-        {
-            switch (data.ResultCode)
-            {
-                case Result.Success:
-                    CopyUserAuthTokenOptions copyAuth = new CopyUserAuthTokenOptions { };
-
-                    Result copyResults = Platform.GetAuthInterface()
-                        .CopyUserAuthToken(copyAuth, data.LocalUserId, out Token authToken);
-
-                    if (copyResults == Result.Success)
-                    {
-                        OnlineServices.Connect.LoginOptions loginOptions =
-                            new OnlineServices.Connect.LoginOptions
-                            {
-                                Credentials = new OnlineServices.Connect.Credentials
-                                {
-                                    Token = authToken.AccessToken, Type = ExternalCredentialType.Epic
-                                },
-                                UserLoginInfo = null
-                            };
-
-                        Platform.GetConnectInterface().Login(loginOptions, null, info =>
-                        {
-                            if (info.ResultCode == Result.Success)
-                            {
-                                AccountId = new EpicUser(data.LocalUserId, info.LocalUserId);
-
-                                // Let's query for account information and cache info.
-                                QueryUserInfoOptions queryUserInfoOptions = new QueryUserInfoOptions
-                                {
-                                    LocalUserId = data.LocalUserId, TargetUserId = data.LocalUserId
-                                };
-
-                                Platform.GetUserInfoInterface().QueryUserInfo(queryUserInfoOptions, null,
-                                    callbackInfo =>
-                                    {
-                                        if (callbackInfo.ResultCode == Result.Success)
-                                        {
-                                            CopyUserInfoOptions copyUserInfoOptions = new CopyUserInfoOptions
-                                            {
-                                                LocalUserId = callbackInfo.LocalUserId,
-                                                TargetUserId = callbackInfo.TargetUserId
-                                            };
-
-                                            Result result = Platform.GetUserInfoInterface()
-                                                .CopyUserInfo(copyUserInfoOptions, out UserInfoData userInfoData);
-
-                                            if (result == Result.Success)
-                                            {
-                                                if (_enableDebugLogs)
-                                                    DebugLogger.RegularDebugLog(
-                                                        $"<color=green>Connect Successful. Welcome {AccountId.Name}</color>");
-
-                                                if (data.ResultCode == Result.Success)
-                                                    UserLoggedIn?.Invoke();
-                                            }
-                                        }
-                                    });
-                            }
-                            else
-                            {
-                                if (_useDeviceAccountCreation)
-                                {
-                                    AuthenticateDeviceUser();
-                                }
-                                else
-                                {
-                                    if (_enableDebugLogs)
-                                        DebugLogger.RegularDebugLog(
-                                            $"<color=red>Connect Not Successful.</color>");
-                                }
-                            }
-                        });
-                    }
-                    else
-                    {
-                        if (_enableDebugLogs)
-                            DebugLogger.RegularDebugLog(
-                                $"<color=red>Auth copy Not Successful./color>");
-                    }
-
-                    break;
-                default:
-
-                    if (_enableDebugLogs)
-                        DebugLogger.RegularDebugLog(
-                            $"<color=red>Authentication Login Not Successful. Status: {data.ResultCode}</color>");
-
-                    if (data.ResultCode == Result.Success)
-                        UserLoggedIn?.Invoke();
-
-                    break;
-            }
-        }
-
-        /// <summary>
-        ///     Authenticate epic user to the manager.
-        /// </summary>
-        /// <returns></returns>
-        public void AuthenticateDeviceUser()
-        {
-            CreateDeviceIdOptions createDeviceIdOptions =
-                new CreateDeviceIdOptions {DeviceModel = $"{Application.platform}"};
-
-            ConnectInterface.CreateDeviceId(createDeviceIdOptions, null, CreateDeviceCallback);
-        }
-
-        /// <summary>
-        ///     Received callback upon successful or unsuccessful device creation attempt.
-        /// </summary>
-        /// <param name="data">The data return back to us from epic.</param>
-        private void CreateDeviceCallback(CreateDeviceIdCallbackInfo data)
-        {
-            if (data.ResultCode == Result.Success || data.ResultCode == Result.DuplicateNotAllowed)
-            {
-                OnlineServices.Connect.LoginOptions loginOptions = new OnlineServices.Connect.LoginOptions
-                {
-                    UserLoginInfo = new UserLoginInfo {DisplayName = "One More Night Player"},
-
-                    Credentials = new OnlineServices.Connect.Credentials
-                    {
-                        Type = ExternalCredentialType.DeviceidAccessToken,
-                        Token = null
-                    }
-                };
-
-                ConnectInterface.Login(loginOptions, null, ConnectLoginCallback);
-            }
-            else
-            {
-                DebugLogger.RegularDebugLog("Device ID creation returned " + data.ResultCode, LogType.Error);
-            }
-        }
-
-        /// <summary>
-        ///     
-        /// </summary>
-        /// <param name="data"></param>
-        private void ConnectLoginCallback(OnlineServices.Connect.LoginCallbackInfo data)
-        {
-            if (data.ResultCode == Result.Success)
+            if (loginCallbackInfo.ResultCode == Result.Success)
             {
                 if (_enableDebugLogs)
-                    DebugLogger.RegularDebugLog("Login successful.");
+                    DebugLogger.RegularDebugLog("[EpicManager] - Auth Interface Login succeeded");
 
-                Result result = data.LocalUserId.ToString(out string productIdString);
+                string accountIdString;
+
+                Result result = loginCallbackInfo.LocalUserId.ToString(out accountIdString);
 
                 if (Result.Success == result)
                 {
                     if (_enableDebugLogs)
-                        DebugLogger.RegularDebugLog("User Product ID:" + productIdString);
+                        DebugLogger.RegularDebugLog("[EpicManager] - User ID:" + accountIdString);
 
-                    AccountId = new EpicUser(null, data.LocalUserId);
+                    AccountId = new EpicUser(loginCallbackInfo.LocalUserId, null);
+                }
+
+                ConnectInterfaceLogin();
+            }
+            else
+            {
+                if (_enableDebugLogs)
+                    DebugLogger.RegularDebugLog("[EpicManager] - Login returned " + loginCallbackInfo.ResultCode);
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="createDeviceIdCallbackInfo"></param>
+        private void OnCreateDeviceId(CreateDeviceIdCallbackInfo createDeviceIdCallbackInfo)
+        {
+            if (createDeviceIdCallbackInfo.ResultCode == Result.Success || createDeviceIdCallbackInfo.ResultCode == Result.DuplicateNotAllowed)
+            {
+                ConnectInterfaceLogin();
+            }
+            else
+            {
+                if (_enableDebugLogs)
+                    DebugLogger.RegularDebugLog("[EpicManager] - Device ID creation returned " +
+                                                createDeviceIdCallbackInfo.ResultCode);
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private void ConnectInterfaceLogin()
+        {
+            var loginOptions = new OnlineServices.Connect.LoginOptions();
+
+            if (_connectInterfaceCredentialType == ExternalCredentialType.Epic)
+            {
+                Result result = AuthInterface.CopyUserAuthToken(new CopyUserAuthTokenOptions(), AccountId.EpicAccountId,
+                    out Token token);
+
+                if (result == Result.Success)
+                {
+                    _connectInterfaceCredentialToken = token.AccessToken;
                 }
                 else
                 {
                     if (_enableDebugLogs)
-                        DebugLogger.RegularDebugLog("Login returned " + data.ResultCode, LogType.Error);
+                        DebugLogger.RegularDebugLog("[EpicManager] - Failed to retrieve User Auth Token");
+                }
+            }
+            else if (_connectInterfaceCredentialType == ExternalCredentialType.DeviceidAccessToken)
+            {
+                loginOptions.UserLoginInfo = new UserLoginInfo {DisplayName = displayName};
+            }
+
+            loginOptions.Credentials =
+                new OnlineServices.Connect.Credentials
+                {
+                    Type = _connectInterfaceCredentialType, Token = _connectInterfaceCredentialToken
+                };
+
+            ConnectInterface.Login(loginOptions, null, OnConnectInterfaceLogin);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="loginCallbackInfo"></param>
+        private void OnConnectInterfaceLogin(OnlineServices.Connect.LoginCallbackInfo loginCallbackInfo)
+        {
+            if (loginCallbackInfo.ResultCode == Result.Success)
+            {
+                if (_enableDebugLogs)
+                    DebugLogger.RegularDebugLog("[EpicManager] - Connect Interface Login succeeded");
+
+                Result result = loginCallbackInfo.LocalUserId.ToString(out string productIdString);
+
+                if (Result.Success == result)
+                {
+                    if (_enableDebugLogs)
+                        DebugLogger.RegularDebugLog("[EpicManager] - User Product ID:" + productIdString);
+
+                    AccountId = new EpicUser(AccountId.EpicAccountId, loginCallbackInfo.LocalUserId);
                 }
             }
             else
             {
                 if (_enableDebugLogs)
-                    DebugLogger.RegularDebugLog($"Login failed. Results: {data.ResultCode}");
+                    DebugLogger.RegularDebugLog("[EpicManager] - Login returned " + loginCallbackInfo.ResultCode);
+
+                ConnectInterface.CreateUser(
+                    new CreateUserOptions {ContinuanceToken = loginCallbackInfo.ContinuanceToken}, null, cb =>
+                    {
+                        if (cb.ResultCode != Result.Success)
+                        {
+                            if (_enableDebugLogs)
+                                DebugLogger.RegularDebugLog(
+                                    $"[EpicManager] - User creation failed. Result: {cb.ResultCode}");
+                            return;
+                        }
+
+                        AccountId = new EpicUser(AccountId.EpicAccountId, loginCallbackInfo.LocalUserId);
+
+                        ConnectInterfaceLogin();
+                    });
             }
         }
-
         #endregion
     }
 }

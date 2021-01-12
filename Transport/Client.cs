@@ -11,6 +11,7 @@ using EpicChill.Transport;
 using Mirror;
 using UnityEngine;
 using Channel = Mirror.Channel;
+using Random = System.Random;
 
 #endregion
 
@@ -81,7 +82,7 @@ namespace EpicTransport
 #endif
                     if (Transport.transportDebug)
                         DebugLogger.RegularDebugLog(
-                            "[Client] - Connection string was not in the right format. Did you enter a SteamId?",
+                            "[Client] - Connection string was not in the right format. Did you enter a ProductId?",
                             LogType.Error);
             }
             catch (Exception ex)
@@ -115,7 +116,10 @@ namespace EpicTransport
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 Reliability = Options.Channels[channel],
                 RemoteUserId = host,
-                SocketId = new SocketId {SocketName = SocketName}
+                SocketId = new SocketId
+                {
+                    SocketName = SocketName
+                }
             }) == Result.Success;
         }
 
@@ -147,7 +151,10 @@ namespace EpicTransport
                     {
                         LocalUserId = EpicManager.AccountId.ProductUserId,
                         RemoteUserId = result.RemoteUserId,
-                        SocketId = new SocketId {SocketName = SocketName}
+                        SocketId = new SocketId
+                        {
+                            SocketName = SocketName
+                        }
                     });
             }
             else

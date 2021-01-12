@@ -17,14 +17,14 @@ namespace EpicTransport
     {
         #region Fields
 
-        protected const string SocketName = "One More Night";
+        protected const string SocketName = "SOCKET_ID";
 
         private readonly CancellationTokenSource _cancellationToken = new CancellationTokenSource();
         private OnIncomingConnectionRequestCallback OnIncomingConnectionRequest;
         private OnRemoteConnectionClosedCallback OnRemoteConnectionClosed;
         protected EpicOptions Options;
         protected EpicTransport Transport;
-        protected internal readonly EpicManager EpicManager;
+        protected readonly EpicManager EpicManager;
         internal readonly ConcurrentQueue<EpicMessage> QueuedData = new ConcurrentQueue<EpicMessage>();
 
         public Action<Result, string> Error;
@@ -102,7 +102,10 @@ namespace EpicTransport
                 {
                     LocalUserId = EpicManager.AccountId.ProductUserId,
                     RemoteUserId = clientUserID,
-                    SocketId = new SocketId {SocketName = SocketName}
+                    SocketId = new SocketId
+                    {
+                        SocketName = SocketName
+                    }
                 });
         }
 
@@ -121,7 +124,10 @@ namespace EpicTransport
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 Reliability = PacketReliability.ReliableOrdered,
                 RemoteUserId = target,
-                SocketId = new SocketId {SocketName = SocketName}
+                SocketId = new SocketId
+                {
+                    SocketName = SocketName
+                }
             }) == Result.Success;
         }
 
