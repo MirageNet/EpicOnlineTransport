@@ -136,7 +136,7 @@ namespace EpicTransport
 
             _epicOptions.ConnectionAddress = ProductUserId.FromString(uri.Host);
 
-            _client = new Client(this, _epicOptions);
+            _client = new Client(this, _epicOptions, false);
 
             _client.Error += (errorCode, message) => Error?.Invoke(errorCode, message);
 

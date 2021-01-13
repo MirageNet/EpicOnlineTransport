@@ -11,7 +11,6 @@ using EpicChill.Transport;
 using Mirror;
 using UnityEngine;
 using Channel = Mirror.Channel;
-using Random = UnityEngine.Random;
 
 #endregion
 
@@ -24,8 +23,6 @@ namespace EpicTransport
         private static readonly ILogger Logger = LogFactory.GetLogger(typeof(Client));
 
         private byte[] _clientSendPoolData;
-        private EpicMessage _clientReceivePoolData;
-        private EpicMessage _clientQueuePoolData;
         private AutoResetUniTaskCompletionSource _connectedComplete;
 
         #endregion
@@ -149,10 +146,15 @@ namespace EpicTransport
         /// </summary>
         /// <param name="transport"></param>
         /// <param name="options"></param>
-        public Client(EpicTransport transport, EpicOptions options) : base(transport, options)
+        /// <param name="serverControlled">Is the data being processed by server or client.</param>
+        public Client(EpicTransport transport, EpicOptions options, bool serverControlled) : base(transport, options)
         {
             Options = options;
             Transport = transport;
+
+            if(serverControlled) return;
+
+            UniTask.Run(ProcessIncomingMessages).Forget();
         }
 
         /// <summary>
@@ -173,6 +175,8 @@ namespace EpicTransport
                             SocketName = SocketName
                         }
                     });
+
+                _connectedComplete.TrySetResult();
             }
             else
             {
@@ -180,33 +184,6 @@ namespace EpicTransport
                     if (Transport.transportDebug)
                         DebugLogger.RegularDebugLog("[Client] - P2P Acceptance Request from unknown host ID.",
                             LogType.Error);
-            }
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        protected override void ProcessIncomingMessages()
-        {
-            while (Connected)
-            {
-                while (DataAvailable(out ProductUserId clientUserID, out byte[] internalMessage,
-                    (byte)Options.Channels.Length))
-                {
-                    if (internalMessage.Length != 1) continue;
-
-                    OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID);
-
-                    break;
-                }
-
-                for (int chNum = 0; chNum < Options.Channels.Length; chNum++)
-                {
-                    while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum))
-                    {
-                        OnReceiveData(receiveBuffer, clientUserID, chNum);
-                    }
-                }
             }
         }
 
@@ -238,7 +215,7 @@ namespace EpicTransport
                     if (Logger.logEnabled)
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
-                                "[Client] - Received internal message to disconnect steam user.");
+                                "[Client] - Received internal message to disconnect epic user.");
 
                     break;
 
@@ -271,18 +248,18 @@ namespace EpicTransport
         /// <param name="data"></param>
         /// <param name="clientEpicId"></param>
         /// <param name="channel"></param>
-        protected override void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel)
+        internal override void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel)
         {
             if (!Connected) return;
 
-            _clientQueuePoolData = new EpicMessage(clientEpicId, channel, InternalMessage.Data, data);
+            var clientQueuePoolData = new EpicMessage(clientEpicId, channel, InternalMessage.Data, data);
 
             if (Logger.logEnabled)
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog(
-                        $"[Client] - Queue up message Event Type: {_clientQueuePoolData.EventType} data: {BitConverter.ToString(_clientQueuePoolData.Data)}");
+                        $"[Client] - Queue up message Event Type: {clientQueuePoolData.EventType} data: {BitConverter.ToString(clientQueuePoolData.Data)}");
 
-            QueuedData.Enqueue(_clientQueuePoolData);
+            QueuedData.Enqueue(clientQueuePoolData);
         }
 
         #endregion
@@ -330,18 +307,18 @@ namespace EpicTransport
                     await UniTask.Delay(1);
                 }
 
-                QueuedData.TryDequeue(out _clientReceivePoolData);
+                QueuedData.TryDequeue(out EpicMessage clientReceivePoolData);
 
                 buffer.SetLength(0);
 
                 if (Logger.logEnabled)
                     if (Transport.transportDebug)
                         DebugLogger.RegularDebugLog(
-                            $"[Client] Processing message: {BitConverter.ToString(_clientReceivePoolData.Data)}");
+                            $"[Client] Processing message: {BitConverter.ToString(clientReceivePoolData.Data)}");
 
-                await buffer.WriteAsync(_clientReceivePoolData.Data, 0, _clientReceivePoolData.Data.Length);
+                await buffer.WriteAsync(clientReceivePoolData.Data, 0, clientReceivePoolData.Data.Length);
 
-                return _clientReceivePoolData.Channel;
+                return clientReceivePoolData.Channel;
             }
             catch (EndOfStreamException)
             {

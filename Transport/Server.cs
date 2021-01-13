@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using Cysharp.Threading.Tasks;
 using Epic.Logging;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
@@ -51,6 +52,8 @@ namespace EpicTransport
             Options = options;
             Transport = transport;
             _connectedSteamUsers = new Dictionary<ProductUserId, Client>();
+
+            UniTask.Run(ProcessIncomingMessages).Forget();
         }
 
         /// <summary>
@@ -72,24 +75,6 @@ namespace EpicTransport
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog(
                         $"[Server] - Received internal connection message but failed to accepted connection. Result: {accepted}");
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        protected override void ProcessIncomingMessages()
-        {
-            while (Connected)
-            {
-                while (DataAvailable(out ProductUserId clientProductId, out byte[] internalMessage, (byte) Options.Channels.Length))
-                {
-                    if (internalMessage.Length != 1) continue;
-
-                    OnReceiveInternalData((InternalMessage)internalMessage[0], clientProductId);
-
-                    break;
-                }
-            }
         }
 
         /// <summary>
@@ -137,7 +122,7 @@ namespace EpicTransport
 
                     Options.ConnectionAddress = clientEpicId;
 
-                    var client = new Client(Transport, Options);
+                    var client = new Client(Transport, Options, true);
 
                     Transport.Connected.Invoke(client);
 
@@ -167,14 +152,17 @@ namespace EpicTransport
         /// <param name="data"></param>
         /// <param name="clientEpicId"></param>
         /// <param name="channel"></param>
-        protected override void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel)
+        internal override void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel)
         {
-            var dataMsg = new EpicMessage(clientEpicId, channel, InternalMessage.Data, data);
+            if (_connectedSteamUsers.TryGetValue(clientEpicId, out Client client))
+            {
+                client.OnReceiveData(data, clientEpicId, channel);
+            }
 
             if (Logger.logEnabled)
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog(
-                        $"[Server] - Queue up message Event Type: {dataMsg.EventType} data: {BitConverter.ToString(dataMsg.Data)}");
+                        $"[Server] - Queue up message Event Type: {InternalMessage.Data} data: {BitConverter.ToString(data)}");
         }
 
         #endregion

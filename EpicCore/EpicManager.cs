@@ -227,7 +227,7 @@ namespace Epic.Core
                     DebugLogger.RegularDebugLog("[EpicManager] - Initialization of epic services complete.");
 
                 // Process epic services in a separate task.
-                UniTask.Run(Tick).Forget();
+                _ = UniTask.Run(Tick);
 
                 // If we use the Auth interface then only login into the Connect interface after finishing the auth interface login
                 // If we don't use the Auth interface we can directly login to the Connect interface

@@ -63,8 +63,6 @@ namespace EpicTransport
 
             EpicManager.P2PInterface.AddNotifyPeerConnectionClosed(addNotifyPeerConnectionClosedOptions,
                 null, _onRemoteConnectionClosed);
-
-            UniTask.Run(ProcessIncomingMessages).Forget();
         }
 
         /// <summary>
@@ -199,7 +197,33 @@ namespace EpicTransport
         /// <summary>
         ///     Update method to be called by the transport.
         /// </summary>
-        protected abstract void ProcessIncomingMessages();
+        protected async void ProcessIncomingMessages()
+        {
+            while (Connected)
+            {
+                while (DataAvailable(out ProductUserId clientUserID, out byte[] internalMessage,
+                    (byte)Options.Channels.Length))
+                {
+                    if (internalMessage.Length == 1)
+                    {
+                        OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID);
+                    }
+
+                    if (Transport.transportDebug)
+                        DebugLogger.RegularDebugLog("[Client] - Incorrect package length on internal channel.");
+                }
+
+                for (int chNum = 0; chNum < Options.Channels.Length; chNum++)
+                {
+                    while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum))
+                    {
+                        OnReceiveData(receiveBuffer, clientUserID, chNum);
+                    }
+                }
+
+                await UniTask.Delay(1);
+            }
+        }
 
         /// <summary>
         ///     Process our internal messages away from mirror.
@@ -214,7 +238,7 @@ namespace EpicTransport
         /// <param name="data">The data that has come in.</param>
         /// <param name="clientEpicId">The client the data came from.</param>
         /// <param name="channel">The channel the data was received on.</param>
-        protected abstract void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel);
+        internal abstract void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel);
 
         #endregion
     }
