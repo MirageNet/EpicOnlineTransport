@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Epic.Core;
+using Epic.Logging;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using EpicChill.Transport;
@@ -17,11 +18,11 @@ namespace EpicTransport
     {
         #region Fields
 
-        protected const string SocketName = "SOCKET_ID";
+        protected const string SocketName = "SOCKETID";
 
         private readonly CancellationTokenSource _cancellationToken = new CancellationTokenSource();
-        private OnIncomingConnectionRequestCallback OnIncomingConnectionRequest;
-        private OnRemoteConnectionClosedCallback OnRemoteConnectionClosed;
+        private readonly OnIncomingConnectionRequestCallback _onIncomingConnectionRequest;
+        private readonly OnRemoteConnectionClosedCallback _onRemoteConnectionClosed;
         protected EpicOptions Options;
         protected EpicTransport Transport;
         protected readonly EpicManager EpicManager;
@@ -41,10 +42,29 @@ namespace EpicTransport
             EpicManager = Transport.EpicManager;
             Options = options;
 
-            OnIncomingConnectionRequest += OnNewConnection;
-            OnRemoteConnectionClosed += OnConnectionFailed;
+            AddNotifyPeerConnectionRequestOptions addNotifyPeerConnectionRequestOptions =
+                new AddNotifyPeerConnectionRequestOptions {LocalUserId = EpicManager.AccountId.ProductUserId};
 
-            _ = UniTask.Run(ProcessIncomingMessages);
+            SocketId socketId = new SocketId {SocketName = SocketName};
+
+            addNotifyPeerConnectionRequestOptions.SocketId = socketId;
+
+            _onIncomingConnectionRequest += OnNewConnection;
+            _onRemoteConnectionClosed += OnConnectionFailed;
+
+            EpicManager.P2PInterface.AddNotifyPeerConnectionRequest(addNotifyPeerConnectionRequestOptions,
+                null, _onIncomingConnectionRequest);
+
+            AddNotifyPeerConnectionClosedOptions addNotifyPeerConnectionClosedOptions =
+                new AddNotifyPeerConnectionClosedOptions
+                {
+                    LocalUserId = EpicManager.AccountId.ProductUserId, SocketId = socketId
+                };
+
+            EpicManager.P2PInterface.AddNotifyPeerConnectionClosed(addNotifyPeerConnectionClosedOptions,
+                null, _onRemoteConnectionClosed);
+
+            UniTask.Run(ProcessIncomingMessages).Forget();
         }
 
         /// <summary>
@@ -66,13 +86,13 @@ namespace EpicTransport
             switch (result.Reason)
             {
                 case ConnectionClosedReason.ClosedByLocalUser:
-                    throw new Exception("Connection cLosed: The Connection was gracecfully closed by the local user.");
+                    throw new Exception("Connection closed: The Connection was gracefully closed by the local user.");
                 case ConnectionClosedReason.ClosedByPeer:
                     throw new Exception("Connection closed: The connection was gracefully closed by remote user.");
                 case ConnectionClosedReason.ConnectionClosed:
                     throw new Exception("Connection closed: The connection was unexpectedly closed.");
                 case ConnectionClosedReason.ConnectionFailed:
-                    throw new Exception("Connection failed: Failled to establish connection.");
+                    throw new Exception("Connection failed: Failed to establish connection.");
                 case ConnectionClosedReason.InvalidData:
                     throw new Exception("Connection failed: The remote user sent us invalid data..");
                 case ConnectionClosedReason.InvalidMessage:
@@ -116,7 +136,7 @@ namespace EpicTransport
         /// <param name="type">The type of <see cref="InternalMessage"/> we want to send.</param>
         internal bool SendInternal(ProductUserId target, InternalMessage type)
         {
-            return EpicManager.P2PInterface.SendPacket(new SendPacketOptions
+            bool sent = EpicManager.P2PInterface.SendPacket(new SendPacketOptions
             {
                 AllowDelayedDelivery = true,
                 Channel = (byte)Options.Channels.Length,
@@ -129,6 +149,19 @@ namespace EpicTransport
                     SocketName = SocketName
                 }
             }) == Result.Success;
+
+            if (sent)
+            {
+                if (Transport.transportDebug)
+                    DebugLogger.RegularDebugLog("[Client] - Packet sent successfully.");
+            }
+            else
+            {
+                if (Transport.transportDebug)
+                    DebugLogger.RegularDebugLog("[Client] - Packet failed to send.");
+            }
+
+            return sent;
         }
 
         /// <summary>
@@ -140,12 +173,12 @@ namespace EpicTransport
         /// <returns></returns>
         protected bool DataAvailable(out ProductUserId clientProductUserId, out byte[] receiveBuffer, byte channel)
         {
-            Result result = EpicManager.P2PInterface.ReceivePacket(new ReceivePacketOptions()
+            Result result = EpicManager.P2PInterface.ReceivePacket(new ReceivePacketOptions
             {
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 MaxDataSizeBytes = P2PInterface.MaxPacketSize,
                 RequestedChannel = channel
-            }, out clientProductUserId, out SocketId _, out channel, out receiveBuffer);
+            }, out clientProductUserId, out _, out _, out receiveBuffer);
 
             if (result == Result.Success)
             {

@@ -30,9 +30,7 @@ namespace EpicTransport
         /// </summary>
         public void StartListening()
         {
-#if UNITY_EDITOR
             if (Logger.logEnabled)
-#endif
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog("[Server] - Listening for incoming connections....");
 
@@ -61,15 +59,19 @@ namespace EpicTransport
         /// <param name="result"></param>
         protected override void OnNewConnection(OnIncomingConnectionRequestInfo result)
         {
-            EpicManager.P2PInterface.AcceptConnection(new AcceptConnectionOptions
+            Result accepted = EpicManager.P2PInterface.AcceptConnection(new AcceptConnectionOptions
             {
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 RemoteUserId = result.RemoteUserId,
-                SocketId = new SocketId
-                {
-                    SocketName = SocketName
-                }
+                SocketId = new SocketId {SocketName = SocketName}
             });
+
+            if (accepted == Result.Success) return;
+
+            if (Logger.logEnabled)
+                if (Transport.transportDebug)
+                    DebugLogger.RegularDebugLog(
+                        $"[Server] - Received internal connection message but failed to accepted connection. Result: {accepted}");
         }
 
         /// <summary>
@@ -100,9 +102,7 @@ namespace EpicTransport
             switch (type)
             {
                 case InternalMessage.Disconnect:
-#if UNITY_EDITOR
                     if (Logger.logEnabled)
-#endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
                                 "[Server] - Received internal message to disconnect epic user.");
@@ -115,9 +115,7 @@ namespace EpicTransport
 
                         _connectedSteamUsers.Remove(clientEpicId);
 
-#if UNITY_EDITOR
                         if (Logger.logEnabled)
-#endif
                             if (Transport.transportDebug)
                                 DebugLogger.RegularDebugLog(
                                     $"[Server] - Client with ProductId {clientEpicId} disconnected.");
@@ -130,6 +128,8 @@ namespace EpicTransport
                     {
                         SendInternal(clientEpicId, InternalMessage.TooManyUsers);
 
+                        CloseP2PSessionWithUser(clientEpicId);
+
                         return;
                     }
 
@@ -137,13 +137,11 @@ namespace EpicTransport
 
                     Options.ConnectionAddress = clientEpicId;
 
-                    var client = new Client(null, Options);
+                    var client = new Client(Transport, Options);
 
                     Transport.Connected.Invoke(client);
 
-#if UNITY_EDITOR
                     if (Logger.logEnabled)
-#endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
                                 $"[Server] - Connecting with {clientEpicId} and accepting handshake.");
@@ -154,9 +152,7 @@ namespace EpicTransport
                     break;
 
                 default:
-#if UNITY_EDITOR
                     if (Logger.logEnabled)
-#endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
                                 $"[Server] - Client connection cannot process internal message {type}. If this is anything other then {InternalMessage.Data} something has gone wrong.",
@@ -175,9 +171,7 @@ namespace EpicTransport
         {
             var dataMsg = new EpicMessage(clientEpicId, channel, InternalMessage.Data, data);
 
-#if UNITY_EDITOR
             if (Logger.logEnabled)
-#endif
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog(
                         $"[Server] - Queue up message Event Type: {dataMsg.EventType} data: {BitConverter.ToString(dataMsg.Data)}");

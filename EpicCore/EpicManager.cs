@@ -1,5 +1,6 @@
 #region Statements
 
+using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using Epic.Logging;
 using Epic.OnlineServices;
@@ -36,7 +37,7 @@ namespace Epic.Core
         [SerializeField] private bool _authInterfaceLogin = false;
         [SerializeField] private ExternalCredentialType _connectInterfaceCredentialType = ExternalCredentialType.DeviceidAccessToken;
         [SerializeField] private LoginCredentialType _authInterfaceCredentialType = LoginCredentialType.AccountPortal;
-        [SerializeField, Tooltip("Set this to the port you are using the dev auth tool on.")] private int _devAuthToolPort = 7777;
+        [SerializeField, Tooltip("Set this to the port you are using the dev auth tool on.")] private int _devAuthToolPort = 7878;
         [SerializeField, Tooltip("The name you set for dev auth tool after login.")]
         private string _devAuthToolName = "";
         [SerializeField, Tooltip("The name you want the fake creation of new users on the fly to be.")] private string displayName = "User";
@@ -58,7 +59,8 @@ namespace Epic.Core
         /// <summary>
         ///     Has the epic platform been started yet.
         /// </summary>
-        public bool Initialized => Platform != null;
+        public bool Initialized =>
+            Platform != null && AccountId != null;
 
         #region Epic Platforms
 
@@ -150,7 +152,7 @@ namespace Epic.Core
         /// <summary>
         ///     Create and initialize a new epic service manager.
         /// </summary>
-        private void Start()
+        private void Awake()
         {
             if (!Initialized)
                 Initialize();
@@ -191,7 +193,7 @@ namespace Epic.Core
             Result initializeResult = PlatformInterface.Initialize(initializeOptions);
 
             // This code is called each time the game is run in the editor, so we catch the case where the SDK has already been initialized in the editor.
-            var isAlreadyConfiguredInEditor = Application.isEditor && initializeResult == Result.AlreadyConfigured;
+            bool isAlreadyConfiguredInEditor = Application.isEditor && initializeResult == Result.AlreadyConfigured;
 
             if (initializeResult != Result.Success && !isAlreadyConfiguredInEditor)
             {
@@ -225,7 +227,7 @@ namespace Epic.Core
                     DebugLogger.RegularDebugLog("[EpicManager] - Initialization of epic services complete.");
 
                 // Process epic services in a separate task.
-                _ = UniTask.Run(Tick);
+                UniTask.Run(Tick).Forget();
 
                 // If we use the Auth interface then only login into the Connect interface after finishing the auth interface login
                 // If we don't use the Auth interface we can directly login to the Connect interface
@@ -279,13 +281,13 @@ namespace Epic.Core
         /// <summary>
         ///     Need to process updates from epic services every 100ms.
         /// </summary>
-        private void Tick()
+        private async Task Tick()
         {
             while (!(Platform is null))
             {
                 Platform.Tick();
 
-                UniTask.Delay((int) (_tickTime * 1000));
+                await UniTask.Delay((int) (_tickTime * 1000));
             }
         }
 
@@ -300,9 +302,7 @@ namespace Epic.Core
                 if (_enableDebugLogs)
                     DebugLogger.RegularDebugLog("[EpicManager] - Auth Interface Login succeeded");
 
-                string accountIdString;
-
-                Result result = loginCallbackInfo.LocalUserId.ToString(out accountIdString);
+                Result result = loginCallbackInfo.LocalUserId.ToString(out string accountIdString);
 
                 if (Result.Success == result)
                 {
@@ -346,24 +346,28 @@ namespace Epic.Core
         {
             var loginOptions = new OnlineServices.Connect.LoginOptions();
 
-            if (_connectInterfaceCredentialType == ExternalCredentialType.Epic)
+            switch (_connectInterfaceCredentialType)
             {
-                Result result = AuthInterface.CopyUserAuthToken(new CopyUserAuthTokenOptions(), AccountId.EpicAccountId,
-                    out Token token);
+                case ExternalCredentialType.Epic:
+                {
+                    Result result = AuthInterface.CopyUserAuthToken(new CopyUserAuthTokenOptions(), AccountId.EpicAccountId,
+                        out Token token);
 
-                if (result == Result.Success)
-                {
-                    _connectInterfaceCredentialToken = token.AccessToken;
+                    if (result == Result.Success)
+                    {
+                        _connectInterfaceCredentialToken = token.AccessToken;
+                    }
+                    else
+                    {
+                        if (_enableDebugLogs)
+                            DebugLogger.RegularDebugLog("[EpicManager] - Failed to retrieve User Auth Token");
+                    }
+
+                    break;
                 }
-                else
-                {
-                    if (_enableDebugLogs)
-                        DebugLogger.RegularDebugLog("[EpicManager] - Failed to retrieve User Auth Token");
-                }
-            }
-            else if (_connectInterfaceCredentialType == ExternalCredentialType.DeviceidAccessToken)
-            {
-                loginOptions.UserLoginInfo = new UserLoginInfo {DisplayName = displayName};
+                case ExternalCredentialType.DeviceidAccessToken:
+                    loginOptions.UserLoginInfo = new UserLoginInfo {DisplayName = displayName};
+                    break;
             }
 
             loginOptions.Credentials =

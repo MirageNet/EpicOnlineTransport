@@ -11,7 +11,7 @@ using EpicChill.Transport;
 using Mirror;
 using UnityEngine;
 using Channel = Mirror.Channel;
-using Random = System.Random;
+using Random = UnityEngine.Random;
 
 #endregion
 
@@ -38,11 +38,13 @@ namespace EpicTransport
         /// <returns></returns>
         public async UniTask ConnectAsync()
         {
+            Options.ConnectionAddress.ToString(out string productId);
+
 #if UNITY_EDITOR
             if (Logger.logEnabled)
 #endif
                 if (Transport.transportDebug)
-                    DebugLogger.RegularDebugLog($"[Client] - attempting connection to {Options.ConnectionAddress}");
+                    DebugLogger.RegularDebugLog($"[Client] - attempting connection to {productId}");
 
             try
             {
@@ -60,12 +62,14 @@ namespace EpicTransport
 #endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
-                                $"[Client] - Connection to {Options.ConnectionAddress} timed out.", LogType.Error);
+                                $"[Client] - Connection to {productId} timed out.", LogType.Error);
 
                     Error.Invoke(Result.LobbyInviteFailed,
-                        $"[Client] - Connection to {Options.ConnectionAddress} timed out.");
+                        $"[Client] - Connection to {productId} timed out.");
 
                     Disconnect();
+
+                    return;
                 }
 
                 // Everything went good let's just return.
@@ -108,7 +112,7 @@ namespace EpicTransport
         /// <returns></returns>
         private bool Send(ProductUserId host, byte[] msgBuffer, int channel)
         {
-            return EpicManager.P2PInterface.SendPacket(new SendPacketOptions
+            bool sent = EpicManager.P2PInterface.SendPacket(new SendPacketOptions
             {
                 AllowDelayedDelivery = true,
                 Channel = (byte)channel,
@@ -121,6 +125,19 @@ namespace EpicTransport
                     SocketName = SocketName
                 }
             }) == Result.Success;
+
+            if (sent)
+            {
+                if (Transport.transportDebug)
+                    DebugLogger.RegularDebugLog("[Client] - Packet sent successfully.");
+            }
+            else
+            {
+                if (Transport.transportDebug)
+                    DebugLogger.RegularDebugLog("[Client] - Packet failed to send.");
+            }
+
+            return sent;
         }
 
         #endregion
@@ -159,9 +176,7 @@ namespace EpicTransport
             }
             else
             {
-#if UNITY_EDITOR
                 if (Logger.logEnabled)
-#endif
                     if (Transport.transportDebug)
                         DebugLogger.RegularDebugLog("[Client] - P2P Acceptance Request from unknown host ID.",
                             LogType.Error);
@@ -175,21 +190,21 @@ namespace EpicTransport
         {
             while (Connected)
             {
-                while (DataAvailable(out ProductUserId clientSteamId, out byte[] internalMessage,
+                while (DataAvailable(out ProductUserId clientUserID, out byte[] internalMessage,
                     (byte)Options.Channels.Length))
                 {
                     if (internalMessage.Length != 1) continue;
 
-                    OnReceiveInternalData((InternalMessage)internalMessage[0], clientSteamId);
+                    OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID);
 
                     break;
                 }
 
                 for (int chNum = 0; chNum < Options.Channels.Length; chNum++)
                 {
-                    while (DataAvailable(out ProductUserId clientSteamId, out byte[] receiveBuffer, (byte)chNum))
+                    while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum))
                     {
-                        OnReceiveData(receiveBuffer, clientSteamId, chNum);
+                        OnReceiveData(receiveBuffer, clientUserID, chNum);
                     }
                 }
             }
@@ -207,9 +222,8 @@ namespace EpicTransport
             switch (type)
             {
                 case InternalMessage.Accept:
-#if UNITY_EDITOR
+
                     if (Logger.logEnabled)
-#endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
                                 "[Client] - Received internal message of server accepted our request to connect.");
@@ -221,9 +235,7 @@ namespace EpicTransport
                 case InternalMessage.Disconnect:
                     Disconnect();
 
-#if UNITY_EDITOR
                     if (Logger.logEnabled)
-#endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
                                 "[Client] - Received internal message to disconnect steam user.");
@@ -231,9 +243,8 @@ namespace EpicTransport
                     break;
 
                 case InternalMessage.TooManyUsers:
-#if UNITY_EDITOR
+
                     if (Logger.logEnabled)
-#endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
                                 "[Client] - Received internal message that there are too many users connected to server.",
@@ -244,9 +255,8 @@ namespace EpicTransport
                     break;
 
                 default:
-#if UNITY_EDITOR
+
                     if (Logger.logEnabled)
-#endif
                         if (Transport.transportDebug)
                             DebugLogger.RegularDebugLog(
                                 $"[Client] - Cannot process internal message {type}. If this is anything other then {InternalMessage.Data} something has gone wrong.",
@@ -267,9 +277,7 @@ namespace EpicTransport
 
             _clientQueuePoolData = new EpicMessage(clientEpicId, channel, InternalMessage.Data, data);
 
-#if UNITY_EDITOR
             if (Logger.logEnabled)
-#endif
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog(
                         $"[Client] - Queue up message Event Type: {_clientQueuePoolData.EventType} data: {BitConverter.ToString(_clientQueuePoolData.Data)}");
@@ -326,9 +334,7 @@ namespace EpicTransport
 
                 buffer.SetLength(0);
 
-#if UNITY_EDITOR
                 if (Logger.logEnabled)
-#endif
                     if (Transport.transportDebug)
                         DebugLogger.RegularDebugLog(
                             $"[Client] Processing message: {BitConverter.ToString(_clientReceivePoolData.Data)}");
@@ -350,9 +356,7 @@ namespace EpicTransport
         {
             if (!Connected) return;
 
-#if UNITY_EDITOR
             if (Logger.logEnabled)
-#endif
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog("[Client] - Shutting down.");
 

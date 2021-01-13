@@ -23,7 +23,7 @@ namespace EpicTransport
 
         [Header("Transport Options")]
 
-        [SerializeField] private EpicOptions _epicOptions;
+        [SerializeField] private EpicOptions _epicOptions = new EpicOptions();
 
         [Header("Debug Information")]
         [SerializeField] protected internal bool transportDebug = false;
@@ -39,13 +39,13 @@ namespace EpicTransport
 
         #region Unity Methods
 
-        private void OnValidate()
+        private void Start()
         {
-            EpicManager = GetComponent<EpicManager>();
-
             _epicOptions.Channels = new PacketReliability[2];
             _epicOptions.Channels[0] = PacketReliability.ReliableOrdered;
             _epicOptions.Channels[1] = PacketReliability.UnreliableUnordered;
+
+            EpicManager = GetComponent<EpicManager>();
         }
 
         #endregion
@@ -55,9 +55,7 @@ namespace EpicTransport
         /// </summary>
         public void Shutdown()
         {
-#if UNITY_EDITOR
             if (Logger.logEnabled)
-#endif
                 if (transportDebug)
                     DebugLogger.RegularDebugLog("[EpicTransport] - Shutting down.");
 
@@ -78,6 +76,15 @@ namespace EpicTransport
 
         public override UniTask ListenAsync()
         {
+            if (!EpicManager.Initialized)
+            {
+                if (Logger.logEnabled)
+                    if (transportDebug)
+                        DebugLogger.RegularDebugLog("Epic not initialized. Server could not be started.");
+
+                return UniTask.CompletedTask;
+            }
+
             _server = new Server(this, _epicOptions);
 
             _server.StartListening();
@@ -118,6 +125,15 @@ namespace EpicTransport
         /// <returns></returns>
         public override async UniTask<IConnection> ConnectAsync(Uri uri)
         {
+            if (!EpicManager.Initialized)
+            {
+                if (Logger.logEnabled)
+                    if (transportDebug)
+                        DebugLogger.RegularDebugLog("Epic not initialized. Client could not be started.");
+
+                return null;
+            }
+
             _epicOptions.ConnectionAddress = ProductUserId.FromString(uri.Host);
 
             _client = new Client(this, _epicOptions);
@@ -135,10 +151,12 @@ namespace EpicTransport
         /// <returns>Returns back a array of supported scheme's</returns>
         public override IEnumerable<Uri> ServerUri()
         {
+            EpicManager.AccountId.ProductUserId.ToString(out string host);
+
             var steamBuilder = new UriBuilder
             {
                 Scheme = "epic",
-                Host = EpicManager.AccountId.ProductUserId.ToString()
+                Host = host
             };
 
             return new[] { steamBuilder.Uri };

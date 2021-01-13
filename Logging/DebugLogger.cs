@@ -22,21 +22,21 @@ namespace Epic.Logging
             switch (message.Level)
             {
                 case LogLevel.Info:
-                    Debug.Log($"Epic Manager: Category - {message.Category} Message - {message.Message}");
+                    Debug.Log($"<color=green> Epic Manager: Category - {message.Category} Message - {message.Message} </color>");
                     break;
                 case LogLevel.Error:
-                    Debug.LogError($"Epic Manager: Category - {message.Category} Message - {message.Message}");
+                    Debug.LogError($"<color=orange> Epic Manager: Category - {message.Category} Message - {message.Message} </color>");
                     break;
                 case LogLevel.Warning:
-                    Debug.LogWarning($"Epic Manager: Category - {message.Category} Message - {message.Message}");
+                    Debug.LogWarning($"<color=yellow> Epic Manager: Category - {message.Category} Message - {message.Message} </color>");
                     break;
                 case LogLevel.Fatal:
                     Debug.LogException(
-                        new Exception($"Epic Manager: Category - {message.Category} Message - {message.Message}"));
+                        new Exception($"<color=red> Epic Manager: Category - {message.Category} Message - {message.Message} </color>"));
                     break;
                 default:
                     Debug.Log(
-                        $"Epic Manager: Unknown log processing. Category - {message.Category} Message - {message.Message}");
+                        $"<color=purple> Epic Manager: Unknown log processing. Category - {message.Category} Message - {message.Message} </color>");
                     break;
             }
         }
