@@ -48,12 +48,17 @@ namespace EpicTransport
             EpicManager = GetComponent<EpicManager>();
         }
 
+        private void OnApplicationQuit()
+        {
+            Shutdown();
+        }
+
         #endregion
 
         /// <summary>
         ///     Shut down the transport, both as client and server
         /// </summary>
-        public void Shutdown()
+        private void Shutdown()
         {
             if (Logger.logEnabled)
                 if (transportDebug)
@@ -109,12 +114,7 @@ namespace EpicTransport
         {
             get
             {
-                return Application.platform == RuntimePlatform.WindowsEditor ||
-                       Application.platform == RuntimePlatform.WindowsPlayer ||
-                       Application.platform == RuntimePlatform.LinuxEditor ||
-                       Application.platform == RuntimePlatform.LinuxPlayer ||
-                       Application.platform == RuntimePlatform.OSXEditor ||
-                       Application.platform == RuntimePlatform.OSXPlayer;
+                return EpicManager.Initialized;
             }
         }
 

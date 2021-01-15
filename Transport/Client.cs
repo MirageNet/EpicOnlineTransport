@@ -21,7 +21,7 @@ namespace EpicTransport
         #region Fields
 
         private static readonly ILogger Logger = LogFactory.GetLogger(typeof(Client));
-
+        internal SocketId SocketName;
         private byte[] _clientSendPoolData;
         private AutoResetUniTaskCompletionSource _connectedComplete;
 
@@ -46,7 +46,7 @@ namespace EpicTransport
             try
             {
                 // Send a message to server to initiate handshake connection
-                SendInternal(Options.ConnectionAddress, InternalMessage.Connect);
+                SendInternal(Options.ConnectionAddress, InternalMessage.Connect, SocketName);
 
                 _connectedComplete = AutoResetUniTaskCompletionSource.Create();
 
@@ -117,10 +117,7 @@ namespace EpicTransport
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 Reliability = Options.Channels[channel],
                 RemoteUserId = host,
-                SocketId = new SocketId
-                {
-                    SocketName = SocketName
-                }
+                SocketId = SocketName
             }) == Result.Success;
 
             if (sent)
@@ -154,13 +151,15 @@ namespace EpicTransport
 
             if(serverControlled) return;
 
+            SocketName = new SocketId {SocketName = Guid.NewGuid().GetHashCode().ToString().Replace("\u2013", "")};
+
             UniTask.Run(ProcessIncomingMessages).Forget();
         }
 
         /// <summary>
-        /// 
+        ///     New incoming connection from someone. We check to see if its same as in address atm for security.
         /// </summary>
-        /// <param name="result"></param>
+        /// <param name="result">The data we need to process to make a accept the new connection request.</param>
         protected override void OnNewConnection(OnIncomingConnectionRequestInfo result)
         {
             if (Options.ConnectionAddress == result.RemoteUserId)
@@ -170,13 +169,12 @@ namespace EpicTransport
                     {
                         LocalUserId = EpicManager.AccountId.ProductUserId,
                         RemoteUserId = result.RemoteUserId,
-                        SocketId = new SocketId
-                        {
-                            SocketName = SocketName
-                        }
+                        SocketId = result.SocketId
                     });
 
                 _connectedComplete.TrySetResult();
+
+                SocketName = result.SocketId;
             }
             else
             {
@@ -188,11 +186,23 @@ namespace EpicTransport
         }
 
         /// <summary>
-        /// 
+        ///     Overriding this to place cancellation token on connection failed here.
+        /// </summary>
+        /// <param name="result"></param>
+        protected override void OnConnectionFailed(OnRemoteConnectionClosedInfo result)
+        {
+            base.OnConnectionFailed(result);
+
+            Disconnect();
+        }
+
+        /// <summary>
+        ///     Internal data received from server.
         /// </summary>
         /// <param name="type"></param>
         /// <param name="clientEpicId"></param>
-        protected override void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId)
+        /// <param name="socket"></param>
+        protected override void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId, SocketId socket)
         {
             if (!Connected) return;
 
@@ -243,11 +253,11 @@ namespace EpicTransport
         }
 
         /// <summary>
-        /// 
+        ///     Process the data only on this specific client.
         /// </summary>
-        /// <param name="data"></param>
-        /// <param name="clientEpicId"></param>
-        /// <param name="channel"></param>
+        /// <param name="data">The data to process.</param>
+        /// <param name="clientEpicId">The epic user who sent the data.</param>
+        /// <param name="channel">The channel that the data was sent on.</param>
         internal override void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel)
         {
             if (!Connected) return;
@@ -267,10 +277,10 @@ namespace EpicTransport
         #region IConnection Overrides
 
         /// <summary>
-        /// 
+        ///     Process data to be sent to server.
         /// </summary>
-        /// <param name="data"></param>
-        /// <param name="channel"></param>
+        /// <param name="data">The data we want to send.</param>
+        /// <param name="channel">The channel we want to send data on.</param>
         /// <returns></returns>
         public UniTask SendAsync(ArraySegment<byte> data, int channel = Channel.Reliable)
         {
@@ -286,7 +296,7 @@ namespace EpicTransport
         }
 
         /// <summary>
-        /// 
+        ///     Received data from server and process it to mirror.
         /// </summary>
         /// <param name="buffer"></param>
         /// <returns></returns>
@@ -327,7 +337,7 @@ namespace EpicTransport
         }
 
         /// <summary>
-        /// 
+        ///     Disconnect client from server.
         /// </summary>
         public override async void Disconnect()
         {
@@ -339,20 +349,20 @@ namespace EpicTransport
 
             _clientSendPoolData = null;
 
-            SendInternal(Options.ConnectionAddress, InternalMessage.Disconnect);
+            SendInternal(Options.ConnectionAddress, InternalMessage.Disconnect, SocketName);
 
             // Wait 1 seconds to make sure the disconnect message gets fired.
             await UniTask.Delay(1000);
 
-            base.Disconnect();
+            CloseP2PSessionWithUser(Options.ConnectionAddress, SocketName);
 
-            CloseP2PSessionWithUser(Options.ConnectionAddress);
+            base.Disconnect();
 
             _connectedComplete?.TrySetCanceled();
         }
 
         /// <summary>
-        /// 
+        ///     Just returns back the clients <see cref="ProductUserId"/>
         /// </summary>
         /// <returns></returns>
         public EndPoint GetEndPointAddress()

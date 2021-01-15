@@ -20,7 +20,7 @@ namespace EpicTransport
 
         private static readonly ILogger Logger = LogFactory.GetLogger(typeof(Server));
 
-        private readonly IDictionary<ProductUserId, Client> _connectedSteamUsers;
+        private readonly IDictionary<ProductUserId, Client> _connectedEpicUsers;
 
         #endregion
 
@@ -51,25 +51,44 @@ namespace EpicTransport
         {
             Options = options;
             Transport = transport;
-            _connectedSteamUsers = new Dictionary<ProductUserId, Client>();
+            _connectedEpicUsers = new Dictionary<ProductUserId, Client>();
 
             UniTask.Run(ProcessIncomingMessages).Forget();
         }
 
+        protected override void OnConnectionFailed(OnRemoteConnectionClosedInfo result)
+        {
+            if (_connectedEpicUsers.ContainsKey(result.RemoteUserId))
+                _connectedEpicUsers.Remove(result.RemoteUserId);
+
+            base.OnConnectionFailed(result);
+        }
+
+
+        public override void Disconnect()
+        {
+            base.Disconnect();
+
+            _connectedEpicUsers.Clear();
+        }
+
         /// <summary>
-        /// 
+        ///     We accept all incoming connection request on server.
         /// </summary>
-        /// <param name="result"></param>
+        /// <param name="result">The data we need to process to make a accept the new connection request.</param>
         protected override void OnNewConnection(OnIncomingConnectionRequestInfo result)
         {
             Result accepted = EpicManager.P2PInterface.AcceptConnection(new AcceptConnectionOptions
             {
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 RemoteUserId = result.RemoteUserId,
-                SocketId = new SocketId {SocketName = SocketName}
+                SocketId = result.SocketId
             });
 
-            if (accepted == Result.Success) return;
+            if (accepted == Result.Success)
+            {
+                return;
+            }
 
             if (Logger.logEnabled)
                 if (Transport.transportDebug)
@@ -78,11 +97,12 @@ namespace EpicTransport
         }
 
         /// <summary>
-        /// 
+        ///     Process our internal messages away from mirror or epic.
         /// </summary>
-        /// <param name="type"></param>
-        /// <param name="clientEpicId"></param>
-        protected override void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId)
+        /// <param name="type">The type of internal messages we received. <see cref="InternalMessage"/></param>
+        /// <param name="clientEpicId">The epic user who sent the internal message.</param>
+        /// <param name="socket"></param>
+        protected override void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId, SocketId socket)
         {
             switch (type)
             {
@@ -92,13 +112,11 @@ namespace EpicTransport
                             DebugLogger.RegularDebugLog(
                                 "[Server] - Received internal message to disconnect epic user.");
 
-                    if (_connectedSteamUsers.TryGetValue(clientEpicId, out Client connection))
+                    if (_connectedEpicUsers.TryGetValue(clientEpicId, out Client connection))
                     {
                         connection.Disconnect();
 
-                        CloseP2PSessionWithUser(clientEpicId);
-
-                        _connectedSteamUsers.Remove(clientEpicId);
+                        _connectedEpicUsers.Remove(clientEpicId);
 
                         if (Logger.logEnabled)
                             if (Transport.transportDebug)
@@ -109,20 +127,28 @@ namespace EpicTransport
                     break;
 
                 case InternalMessage.Connect:
-                    if (_connectedSteamUsers.Count >= Options.MaxConnections)
+                    if (_connectedEpicUsers.Count >= Options.MaxConnections)
                     {
-                        SendInternal(clientEpicId, InternalMessage.TooManyUsers);
-
-                        CloseP2PSessionWithUser(clientEpicId);
+                        SendInternal(clientEpicId, InternalMessage.TooManyUsers, socket);
 
                         return;
                     }
 
-                    if (_connectedSteamUsers.ContainsKey(clientEpicId)) return;
+                    if (_connectedEpicUsers.ContainsKey(clientEpicId))
+                    {
+                        if (Logger.logEnabled)
+                            if (Transport.transportDebug)
+                                DebugLogger.RegularDebugLog(
+                                    $"[Server] - Client with ProductId {clientEpicId} already connected.");
+                        return;
+                    }
 
                     Options.ConnectionAddress = clientEpicId;
 
                     var client = new Client(Transport, Options, true);
+                    client.SocketName = socket;
+
+                    _connectedEpicUsers.Add(clientEpicId, client);
 
                     Transport.Connected.Invoke(client);
 
@@ -131,9 +157,7 @@ namespace EpicTransport
                             DebugLogger.RegularDebugLog(
                                 $"[Server] - Connecting with {clientEpicId} and accepting handshake.");
 
-                    _connectedSteamUsers.Add(clientEpicId, client);
-
-                    SendInternal(clientEpicId, InternalMessage.Accept);
+                    SendInternal(clientEpicId, InternalMessage.Accept, socket);
                     break;
 
                 default:
@@ -147,14 +171,14 @@ namespace EpicTransport
         }
 
         /// <summary>
-        /// 
+        ///     Process data that has come in to the correct clients.
         /// </summary>
-        /// <param name="data"></param>
-        /// <param name="clientEpicId"></param>
-        /// <param name="channel"></param>
+        /// <param name="data">The data that we received.</param>
+        /// <param name="clientEpicId">The client in which the data came from.</param>
+        /// <param name="channel">The channel the data came on.</param>
         internal override void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel)
         {
-            if (_connectedSteamUsers.TryGetValue(clientEpicId, out Client client))
+            if (_connectedEpicUsers.TryGetValue(clientEpicId, out Client client))
             {
                 client.OnReceiveData(data, clientEpicId, channel);
             }

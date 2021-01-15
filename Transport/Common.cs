@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Epic.Core;
@@ -18,11 +19,10 @@ namespace EpicTransport
     {
         #region Fields
 
-        protected const string SocketName = "SOCKETID";
-
-        private readonly CancellationTokenSource _cancellationToken = new CancellationTokenSource();
+        protected readonly CancellationTokenSource CancellationToken = new CancellationTokenSource();
         private readonly OnIncomingConnectionRequestCallback _onIncomingConnectionRequest;
         private readonly OnRemoteConnectionClosedCallback _onRemoteConnectionClosed;
+        private  readonly ulong _incomingNotificationId, _outgoingNotificationId;
         protected EpicOptions Options;
         protected EpicTransport Transport;
         protected readonly EpicManager EpicManager;
@@ -30,7 +30,7 @@ namespace EpicTransport
 
         public Action<Result, string> Error;
 
-        public bool Connected => _cancellationToken.IsCancellationRequested != true;
+        public bool Connected => CancellationToken.IsCancellationRequested != true;
 
         #endregion
 
@@ -41,46 +41,38 @@ namespace EpicTransport
             Transport = transport;
             EpicManager = Transport.EpicManager;
             Options = options;
-
+            
             AddNotifyPeerConnectionRequestOptions addNotifyPeerConnectionRequestOptions =
                 new AddNotifyPeerConnectionRequestOptions {LocalUserId = EpicManager.AccountId.ProductUserId};
-
-            SocketId socketId = new SocketId {SocketName = SocketName};
-
-            addNotifyPeerConnectionRequestOptions.SocketId = socketId;
 
             _onIncomingConnectionRequest += OnNewConnection;
             _onRemoteConnectionClosed += OnConnectionFailed;
 
-            EpicManager.P2PInterface.AddNotifyPeerConnectionRequest(addNotifyPeerConnectionRequestOptions,
+            _incomingNotificationId = EpicManager.P2PInterface.AddNotifyPeerConnectionRequest(addNotifyPeerConnectionRequestOptions,
                 null, _onIncomingConnectionRequest);
 
             AddNotifyPeerConnectionClosedOptions addNotifyPeerConnectionClosedOptions =
                 new AddNotifyPeerConnectionClosedOptions
                 {
-                    LocalUserId = EpicManager.AccountId.ProductUserId, SocketId = socketId
+                    LocalUserId = EpicManager.AccountId.ProductUserId
                 };
 
-            EpicManager.P2PInterface.AddNotifyPeerConnectionClosed(addNotifyPeerConnectionClosedOptions,
+            _outgoingNotificationId = EpicManager.P2PInterface.AddNotifyPeerConnectionClosed(addNotifyPeerConnectionClosedOptions,
                 null, _onRemoteConnectionClosed);
         }
 
         /// <summary>
-        /// 
+        ///     Override this to do something when epic sends us a new connection request.
         /// </summary>
-        /// <param name="result"></param>
+        /// <param name="result">The data coming in with new connection request.</param>
         protected abstract void OnNewConnection(OnIncomingConnectionRequestInfo result);
 
         /// <summary>
-        ///     Connection request has failed to connect to user.
+        ///     Connection request has failed to connect user.
         /// </summary>
-        /// <param name="result"></param>
+        /// <param name="result">The information coming back from failed connection.</param>
         protected virtual void OnConnectionFailed(OnRemoteConnectionClosedInfo result)
         {
-            CloseP2PSessionWithUser(result.RemoteUserId);
-
-            _cancellationToken.Cancel();
-
             switch (result.Reason)
             {
                 case ConnectionClosedReason.ClosedByLocalUser:
@@ -113,17 +105,15 @@ namespace EpicTransport
         /// 
         /// </summary>
         /// <param name="clientUserID"></param>
-        protected void CloseP2PSessionWithUser(ProductUserId clientUserID)
+        /// <param name="socket"></param>
+        protected void CloseP2PSessionWithUser(ProductUserId clientUserID, SocketId socket)
         {
             EpicManager.P2PInterface.CloseConnection(
                 new CloseConnectionOptions
                 {
                     LocalUserId = EpicManager.AccountId.ProductUserId,
                     RemoteUserId = clientUserID,
-                    SocketId = new SocketId
-                    {
-                        SocketName = SocketName
-                    }
+                    SocketId = socket
                 });
         }
 
@@ -132,9 +122,9 @@ namespace EpicTransport
         /// </summary>
         /// <param name="target">The steam person we are sending internal message to.</param>
         /// <param name="type">The type of <see cref="InternalMessage"/> we want to send.</param>
-        internal bool SendInternal(ProductUserId target, InternalMessage type)
+        internal bool SendInternal(ProductUserId target, InternalMessage type, SocketId socket)
         {
-            bool sent = EpicManager.P2PInterface.SendPacket(new SendPacketOptions
+            Result sent = EpicManager.P2PInterface.SendPacket(new SendPacketOptions
             {
                 AllowDelayedDelivery = true,
                 Channel = (byte)Options.Channels.Length,
@@ -142,13 +132,10 @@ namespace EpicTransport
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 Reliability = PacketReliability.ReliableOrdered,
                 RemoteUserId = target,
-                SocketId = new SocketId
-                {
-                    SocketName = SocketName
-                }
-            }) == Result.Success;
+                SocketId = socket
+            });
 
-            if (sent)
+            if (sent == Result.Success)
             {
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog("[Client] - Packet sent successfully.");
@@ -156,27 +143,27 @@ namespace EpicTransport
             else
             {
                 if (Transport.transportDebug)
-                    DebugLogger.RegularDebugLog("[Client] - Packet failed to send.");
+                    DebugLogger.RegularDebugLog($"[Client] - Packet failed to send. Results: {sent}");
             }
 
-            return sent;
+            return sent == Result.Success;
         }
 
         /// <summary>
-        ///     Check to see if we have received any data from steam users.
+        ///     Check to see if we have received any data from epic users.
         /// </summary>
-        /// <param name="clientProductUserId">Returns back the steam id of users who sent message.</param>
+        /// <param name="clientProductUserId">Returns back the epic id of users who sent message.</param>
         /// <param name="receiveBuffer">The data that was sent to use.</param>
         /// <param name="channel">The channel the data was sent on.</param>
         /// <returns></returns>
-        protected bool DataAvailable(out ProductUserId clientProductUserId, out byte[] receiveBuffer, byte channel)
+        protected bool DataAvailable(out ProductUserId clientProductUserId, out byte[] receiveBuffer, byte channel, out SocketId socket)
         {
             Result result = EpicManager.P2PInterface.ReceivePacket(new ReceivePacketOptions
             {
                 LocalUserId = EpicManager.AccountId.ProductUserId,
                 MaxDataSizeBytes = P2PInterface.MaxPacketSize,
                 RequestedChannel = channel
-            }, out clientProductUserId, out _, out _, out receiveBuffer);
+            }, out clientProductUserId, out socket, out _, out receiveBuffer);
 
             if (result == Result.Success)
             {
@@ -189,9 +176,21 @@ namespace EpicTransport
             return false;
         }
 
+        /// <summary>
+        ///     Cleanup before we finalize disconnection.
+        /// </summary>
         public virtual void Disconnect()
         {
-            _cancellationToken?.Cancel();
+            // Empty the queue out because we are losing connection.
+            while (!QueuedData.IsEmpty)
+            {
+                QueuedData.TryDequeue(out _);
+            }
+
+            EpicManager.P2PInterface.RemoveNotifyPeerConnectionRequest(_incomingNotificationId);
+            EpicManager.P2PInterface.RemoveNotifyPeerConnectionClosed(_outgoingNotificationId);
+
+            CancellationToken?.Cancel();
         }
 
         /// <summary>
@@ -202,11 +201,11 @@ namespace EpicTransport
             while (Connected)
             {
                 while (DataAvailable(out ProductUserId clientUserID, out byte[] internalMessage,
-                    (byte)Options.Channels.Length))
+                    (byte)Options.Channels.Length, out SocketId socket))
                 {
                     if (internalMessage.Length == 1)
                     {
-                        OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID);
+                        OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID, socket);
                     }
 
                     if (Transport.transportDebug)
@@ -215,7 +214,7 @@ namespace EpicTransport
 
                 for (int chNum = 0; chNum < Options.Channels.Length; chNum++)
                 {
-                    while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum))
+                    while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum, out SocketId _))
                     {
                         OnReceiveData(receiveBuffer, clientUserID, chNum);
                     }
@@ -230,7 +229,8 @@ namespace EpicTransport
         /// </summary>
         /// <param name="type">The <see cref="InternalMessage"/> type message we received.</param>
         /// <param name="clientEpicId">The client id which the internal message came from.</param>
-        protected abstract void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId);
+        /// <param name="socket">The socket we want to process internal data on.</param>
+        protected abstract void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId, SocketId socket);
 
         /// <summary>
         ///     Process data incoming from steam backend.

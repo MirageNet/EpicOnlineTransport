@@ -1,5 +1,6 @@
 #region Statements
 
+using System;
 using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using Epic.Logging;
@@ -34,12 +35,17 @@ namespace Epic.Core
 
         [Header("Debug Information")]
         [SerializeField] private bool _enableDebugLogs;
-        [SerializeField] private bool _authInterfaceLogin = false;
-        [SerializeField] private ExternalCredentialType _connectInterfaceCredentialType = ExternalCredentialType.DeviceidAccessToken;
-        [SerializeField] private LoginCredentialType _authInterfaceCredentialType = LoginCredentialType.AccountPortal;
+        [SerializeField] private LogLevel _epicLoggingLevel = LogLevel.Error;
+
+        [Header("Epic Device Auth Tool Settings")]
         [SerializeField, Tooltip("Set this to the port you are using the dev auth tool on.")] private int _devAuthToolPort = 7878;
         [SerializeField, Tooltip("The name you set for dev auth tool after login.")]
         private string _devAuthToolName = "";
+
+        [Header("Epic Account Login Settings")]
+        [SerializeField] private bool _authInterfaceLogin = false;
+        [SerializeField] private ExternalCredentialType _connectInterfaceCredentialType = ExternalCredentialType.DeviceidAccessToken;
+        [SerializeField] private LoginCredentialType _authInterfaceCredentialType = LoginCredentialType.AccountPortal;
         [SerializeField, Tooltip("The name you want the fake creation of new users on the fly to be.")] private string displayName = "User";
 
         [Header("Epic Product Settings")]
@@ -158,6 +164,18 @@ namespace Epic.Core
                 Initialize();
         }
 
+        public void OnDisable()
+        {
+            if (Application.isEditor)
+            {
+                LogoutOptions logoutOptions =
+                    new LogoutOptions { LocalUserId = AccountId.EpicAccountId };
+
+                // Callback might not be called since we call Logout in OnDestroy()
+                AuthInterface.Logout(logoutOptions, null, OnAuthInterfaceLogout);
+            }
+        }
+
         /// <summary>
         ///     Shutdown epic services.
         /// </summary>
@@ -166,7 +184,7 @@ namespace Epic.Core
             if (_enableDebugLogs)
                 DebugLogger.RegularDebugLog("[EpicManager] - Releasing epic resources and shutting down epic services.");
 
-            if (!Application.isEditor && Platform != null)
+            if(!Application.isEditor)
             {
                 Platform.Release();
                 Platform = null;
@@ -177,6 +195,11 @@ namespace Epic.Core
         #endregion
 
         #region Class Specific
+
+        /// <summary>
+        ///     Hack to logout for editor only.
+        /// </summary>
+        private void OnAuthInterfaceLogout(LogoutCallbackInfo logoutCallbackInfo){}
 
         /// <summary>
         ///     Initialize epic sdk.
@@ -202,7 +225,7 @@ namespace Epic.Core
 
             if (_enableDebugLogs)
             {
-                LoggingInterface.SetLogLevel(LogCategory.AllCategories, LogLevel.Verbose);
+                LoggingInterface.SetLogLevel(LogCategory.AllCategories, _epicLoggingLevel);
                 LoggingInterface.SetCallback(message => DebugLogger.EpicDebugLog(message));
             }
 
@@ -216,7 +239,7 @@ namespace Epic.Core
                     SandboxId = _options.SandboxId,
                     ClientCredentials = clientCredentials,
                     IsServer = false,
-                    DeploymentId = _options.DeploymentId
+                    DeploymentId = _options.DeploymentId,
                 };
 
             Platform = PlatformInterface.Create(options);
