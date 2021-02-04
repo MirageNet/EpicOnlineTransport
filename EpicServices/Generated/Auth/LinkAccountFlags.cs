@@ -8,7 +8,7 @@ namespace Epic.OnlineServices.Auth
 	/// <seealso cref="AuthInterface.LinkAccount" />
 	/// </summary>
 	[System.Flags]
-	public enum LinkAccountFlags : ulong
+	public enum LinkAccountFlags : int
 	{
 		/// <summary>
 		/// Default flag used for a standard account linking operation.

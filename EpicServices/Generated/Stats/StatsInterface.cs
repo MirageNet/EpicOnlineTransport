@@ -41,7 +41,7 @@ namespace Epic.OnlineServices.Stats
 		/// <summary>
 		/// The most recent version of the <see cref="IngestStat" /> struct.
 		/// </summary>
-		public const int IngeststatApiLatest = 2;
+		public const int IngeststatApiLatest = 3;
 
 		/// <summary>
 		/// Maximum number of stats that can be ingested in a single <see cref="IngestStat" /> operation.
@@ -56,7 +56,7 @@ namespace Epic.OnlineServices.Stats
 		/// <summary>
 		/// The most recent version of the <see cref="QueryStats" /> struct.
 		/// </summary>
-		public const int QuerystatsApiLatest = 2;
+		public const int QuerystatsApiLatest = 3;
 
 		/// <summary>
 		/// The most recent version of the <see cref="Stat" /> struct.

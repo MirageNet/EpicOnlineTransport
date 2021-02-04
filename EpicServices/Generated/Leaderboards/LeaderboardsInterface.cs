@@ -76,17 +76,17 @@ namespace Epic.OnlineServices.Leaderboards
 		/// <summary>
 		/// The most recent version of the <see cref="QueryLeaderboardDefinitions" /> struct.
 		/// </summary>
-		public const int QueryleaderboarddefinitionsApiLatest = 1;
+		public const int QueryleaderboarddefinitionsApiLatest = 2;
 
 		/// <summary>
 		/// The most recent version of the <see cref="QueryLeaderboardRanks" /> struct.
 		/// </summary>
-		public const int QueryleaderboardranksApiLatest = 1;
+		public const int QueryleaderboardranksApiLatest = 2;
 
 		/// <summary>
 		/// The most recent version of the <see cref="QueryLeaderboardUserScores" /> struct.
 		/// </summary>
-		public const int QueryleaderboarduserscoresApiLatest = 1;
+		public const int QueryleaderboarduserscoresApiLatest = 2;
 
 		/// <summary>
 		/// Timestamp value representing an undefined time for <see cref="LeaderboardsInterface" />.

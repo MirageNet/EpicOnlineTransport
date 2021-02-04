@@ -116,7 +116,7 @@ namespace Epic.OnlineServices.Lobby
 		/// <summary>
 		/// All lobbies are referenced by a unique lobby ID
 		/// </summary>
-		public const int MaxLobbies = 4;
+		public const int MaxLobbies = 16;
 
 		public const int MaxLobbyMembers = 64;
 

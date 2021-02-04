@@ -7,7 +7,7 @@ namespace Epic.OnlineServices.Auth
 	/// Flags that describe user permissions
 	/// </summary>
 	[System.Flags]
-	public enum AuthScopeFlags : ulong
+	public enum AuthScopeFlags : int
 	{
 		NoFlags = 0x0,
 		/// <summary>

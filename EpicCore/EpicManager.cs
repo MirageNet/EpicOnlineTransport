@@ -52,11 +52,14 @@ namespace Epic.Core
         [SerializeField] private Options _options;
 
         [Header("Epic Manager Settings.")]
-        [SerializeField, Range(.1f, .5f)] private float _tickTime = .1f;
+        [SerializeField, Range(.00f, .1f)] private float _tickTime;
 
         private string _authInterfaceLoginCredentialId = string.Empty;
         private string _authInterfaceCredentialToken = string.Empty;
         private string _connectInterfaceCredentialToken = string.Empty;
+
+        public Action OnInitialized;
+        public Action OnLoggedIn;
 
         #endregion
 
@@ -220,7 +223,7 @@ namespace Epic.Core
 
             if (initializeResult != Result.Success && !isAlreadyConfiguredInEditor)
             {
-                throw new System.Exception("[EpicManager] - Failed to initialize platform: " + initializeResult);
+                throw new Exception("[EpicManager] - Failed to initialize platform: " + initializeResult);
             }
 
             if (_enableDebugLogs)
@@ -293,6 +296,8 @@ namespace Epic.Core
                         ConnectInterfaceLogin();
                     }
                 }
+
+                OnInitialized?.Invoke();
 
                 return;
             }
@@ -421,6 +426,8 @@ namespace Epic.Core
                         DebugLogger.RegularDebugLog("[EpicManager] - User Product ID:" + productIdString);
 
                     AccountId = new EpicUser(AccountId.EpicAccountId, loginCallbackInfo.LocalUserId);
+
+                    OnLoggedIn?.Invoke();
                 }
             }
             else

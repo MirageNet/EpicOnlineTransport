@@ -24,6 +24,7 @@ namespace EpicTransport
         internal SocketId SocketName;
         private byte[] _clientSendPoolData;
         private AutoResetUniTaskCompletionSource _connectedComplete;
+        private bool _serverControlled = false;
 
         #endregion
 
@@ -148,8 +149,9 @@ namespace EpicTransport
         {
             Options = options;
             Transport = transport;
+            _serverControlled = serverControlled;
 
-            if(serverControlled) return;
+            if (serverControlled) return;
 
             SocketName = new SocketId {SocketName = Guid.NewGuid().GetHashCode().ToString().Replace("\u2013", "")};
 
@@ -349,12 +351,15 @@ namespace EpicTransport
 
             _clientSendPoolData = null;
 
-            SendInternal(Options.ConnectionAddress, InternalMessage.Disconnect, SocketName);
+            if(!_serverControlled)
+            {
+                SendInternal(Options.ConnectionAddress, InternalMessage.Disconnect, SocketName);
 
-            // Wait 1 seconds to make sure the disconnect message gets fired.
-            await UniTask.Delay(1000);
+                // Wait 1 seconds to make sure the disconnect message gets fired.
+                await UniTask.Delay(1000);
 
-            CloseP2PSessionWithUser(Options.ConnectionAddress, SocketName);
+                CloseP2PSessionWithUser(Options.ConnectionAddress, SocketName);
+            }
 
             base.Disconnect();
 
