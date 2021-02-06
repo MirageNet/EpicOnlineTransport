@@ -169,14 +169,7 @@ namespace Epic.Core
 
         public void OnDisable()
         {
-            if (Application.isEditor)
-            {
-                LogoutOptions logoutOptions =
-                    new LogoutOptions { LocalUserId = AccountId.EpicAccountId };
 
-                // Callback might not be called since we call Logout in OnDestroy()
-                AuthInterface.Logout(logoutOptions, null, OnAuthInterfaceLogout);
-            }
         }
 
         /// <summary>
@@ -187,7 +180,15 @@ namespace Epic.Core
             if (_enableDebugLogs)
                 DebugLogger.RegularDebugLog("[EpicManager] - Releasing epic resources and shutting down epic services.");
 
-            if(!Application.isEditor)
+            if (Application.isEditor)
+            {
+                LogoutOptions logoutOptions =
+                    new LogoutOptions { LocalUserId = AccountId.EpicAccountId };
+
+                // Callback might not be called since we call Logout in OnDestroy()
+                AuthInterface.Logout(logoutOptions, null, OnAuthInterfaceLogout);
+            }
+            else
             {
                 Platform.Release();
                 Platform = null;
@@ -308,7 +309,7 @@ namespace Epic.Core
         }
 
         /// <summary>
-        ///     Need to process updates from epic services every 100ms.
+        ///     Need to process updates from epic services every xx ms based on user variable. Default 0ms.
         /// </summary>
         private async Task Tick()
         {

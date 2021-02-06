@@ -367,6 +367,8 @@ namespace EpicTransport
         {
             if (!Connected) return;
 
+            CancellationToken?.Cancel();
+
             if (Logger.logEnabled)
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog("[Client] - Shutting down.");
@@ -386,8 +388,6 @@ namespace EpicTransport
 
                 _connectedComplete?.TrySetResult();
             }
-
-            CancellationToken?.Cancel();
         }
 
         /// <summary>
