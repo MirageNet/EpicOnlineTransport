@@ -25,9 +25,6 @@ namespace EpicTransport
         protected EpicOptions Options;
         protected EpicTransport Transport;
         protected readonly EpicManager EpicManager;
-        internal readonly ConcurrentQueue<EpicMessage> QueuedData = new ConcurrentQueue<EpicMessage>();
-        internal float _delayConnectionTime = 30f;
-        internal bool _delayConnection;
 
         public Action<Result, string> Error;
 
@@ -177,24 +174,16 @@ namespace EpicTransport
             return false;
         }
 
+        protected void Dispose()
+        {
+            EpicManager.P2PInterface.RemoveNotifyPeerConnectionRequest(_incomingNotificationId);
+            EpicManager.P2PInterface.RemoveNotifyPeerConnectionClosed(_outgoingNotificationId);
+        }
+
         /// <summary>
         ///     Cleanup before we finalize disconnection.
         /// </summary>
-        public virtual void Disconnect()
-        {
-            _delayConnection = true;
-
-            // Empty the queue out because we are losing connection.
-            while (!QueuedData.IsEmpty)
-            {
-                QueuedData.TryDequeue(out _);
-            }
-
-            EpicManager.P2PInterface.RemoveNotifyPeerConnectionRequest(_incomingNotificationId);
-            EpicManager.P2PInterface.RemoveNotifyPeerConnectionClosed(_outgoingNotificationId);
-
-            CancellationToken?.Cancel();
-        }
+        public abstract void Disconnect();
 
         /// <summary>
         ///     Update method to be called by the transport.
@@ -206,14 +195,6 @@ namespace EpicTransport
                 while (DataAvailable(out ProductUserId clientUserID, out byte[] internalMessage,
                     (byte)Options.Channels.Length, out SocketId socket))
                 {
-                    // This is a hack due to how epic currently handles disconnects due to allowing
-                    // users to reconnect if connection lost. This means we cannot handle connection lost
-                    // to reconnect back to current game atm.
-                    if (_delayConnection)
-                    {
-                        continue;
-                    }
-
                     if (internalMessage.Length == 1)
                     {
                         OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID, socket);
@@ -227,14 +208,6 @@ namespace EpicTransport
                 {
                     while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum, out SocketId _))
                     {
-                        // This is a hack due to how epic currently handles disconnects due to allowing
-                        // users to reconnect if connection lost. This means we cannot handle connection lost
-                        // to reconnect back to current game atm.
-                        if (_delayConnection)
-                        {
-                            continue;
-                        }
-
                         OnReceiveData(receiveBuffer, clientUserID, chNum);
                     }
                 }

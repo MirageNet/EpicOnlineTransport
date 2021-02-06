@@ -243,6 +243,7 @@ namespace Epic.Core
                     ClientCredentials = clientCredentials,
                     IsServer = false,
                     DeploymentId = _options.DeploymentId,
+                    TickBudgetInMilliseconds = (uint) _tickTime * 1000
                 };
 
             Platform = PlatformInterface.Create(options);

@@ -64,12 +64,19 @@ namespace EpicTransport
             base.OnConnectionFailed(result);
         }
 
-
         public override void Disconnect()
         {
-            base.Disconnect();
+            foreach (KeyValuePair<ProductUserId, Client> client in _connectedEpicUsers)
+            {
+                client.Value.Disconnect();
+                _connectedEpicUsers.Remove(client);
+            }
 
-            _connectedEpicUsers.Clear();
+            ProcessIncomingMessages();
+
+            CancellationToken.Cancel();
+
+            Dispose();
         }
 
         /// <summary>

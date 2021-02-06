@@ -1,6 +1,7 @@
 #region Statements
 
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using Cysharp.Threading.Tasks;
@@ -24,7 +25,9 @@ namespace EpicTransport
         internal SocketId SocketName;
         private byte[] _clientSendPoolData;
         private AutoResetUniTaskCompletionSource _connectedComplete;
-        private bool _serverControlled = false;
+        private readonly bool _serverControlled;
+        private bool _initialWait;
+        internal readonly ConcurrentQueue<EpicMessage> QueuedData = new ConcurrentQueue<EpicMessage>();
 
         #endregion
 
@@ -43,6 +46,15 @@ namespace EpicTransport
 #endif
                 if (Transport.transportDebug)
                     DebugLogger.RegularDebugLog($"[Client] - attempting connection to {productId}");
+
+            if (_initialWait)
+            {
+                // This allows us to dump epic back end of filled up messages
+                // after disconnecting from host.
+                await UniTask.Delay(2 * 1000);
+
+                _initialWait = false;
+            }
 
             try
             {
@@ -73,12 +85,6 @@ namespace EpicTransport
                 // Everything went good let's just return.
                 // We need to switch to main thread for some reason.
                 await UniTask.SwitchToMainThread();
-
-                if (_delayConnection)
-                {
-                    await UniTask.Delay((int) (_delayConnectionTime * 1000));
-                    _delayConnection = false;
-                }
             }
             catch (FormatException)
             {
@@ -157,9 +163,16 @@ namespace EpicTransport
             Transport = transport;
             _serverControlled = serverControlled;
 
+            if (serverControlled)
+            {
+                _initialWait = false;
+            }
+
             if (serverControlled) return;
 
-            SocketName = new SocketId {SocketName = Guid.NewGuid().GetHashCode().ToString().Replace("\u2013", "")};
+            SocketName = new SocketId {SocketName = Guid.NewGuid().ToString("N").GetHashCode().ToString().Replace("-", string.Empty)};
+
+            Debug.Log($"SocketId: {SocketName.SocketName}");
 
             UniTask.Run(ProcessIncomingMessages).Forget();
         }
@@ -170,6 +183,9 @@ namespace EpicTransport
         /// <param name="result">The data we need to process to make a accept the new connection request.</param>
         protected override void OnNewConnection(OnIncomingConnectionRequestInfo result)
         {
+            if(_initialWait)
+                return;
+
             if (Options.ConnectionAddress == result.RemoteUserId)
             {
                 EpicManager.P2PInterface.AcceptConnection(
@@ -212,7 +228,7 @@ namespace EpicTransport
         /// <param name="socket"></param>
         protected override void OnReceiveInternalData(InternalMessage type, ProductUserId clientEpicId, SocketId socket)
         {
-            if (!Connected) return;
+            if (!Connected || _initialWait) return;
 
             switch (type)
             {
@@ -223,7 +239,7 @@ namespace EpicTransport
                             DebugLogger.RegularDebugLog(
                                 "[Client] - Received internal message of server accepted our request to connect.");
 
-                    _connectedComplete.TrySetResult();
+                    _connectedComplete?.TrySetResult();
 
                     break;
 
@@ -268,7 +284,7 @@ namespace EpicTransport
         /// <param name="channel">The channel that the data was sent on.</param>
         internal override void OnReceiveData(byte[] data, ProductUserId clientEpicId, int channel)
         {
-            if (!Connected) return;
+            if (!Connected || _initialWait) return;
 
             var clientQueuePoolData = new EpicMessage(clientEpicId, channel, InternalMessage.Data, data);
 
@@ -316,8 +332,8 @@ namespace EpicTransport
 
                 while (QueuedData.Count <= 0)
                 {
-                    // Due to how steam works we have no connection state to be able to
-                    // know when server disconnects us truly. So when steam sends a internal disconnect
+                    // Due to how epic works we have no connection state to be able to
+                    // know when server disconnects us truly. So when epic sends a internal disconnect
                     // message we disconnect as normal but the _cancellation Token will trigger and we can exit cleanly
                     // using mirror.
                     if (!Connected) throw new EndOfStreamException();
@@ -365,11 +381,13 @@ namespace EpicTransport
                 await UniTask.Delay(1000);
 
                 CloseP2PSessionWithUser(Options.ConnectionAddress, SocketName);
+
+                Dispose();
+
+                _connectedComplete?.TrySetResult();
             }
 
-            base.Disconnect();
-
-            _connectedComplete?.TrySetCanceled();
+            CancellationToken?.Cancel();
         }
 
         /// <summary>
