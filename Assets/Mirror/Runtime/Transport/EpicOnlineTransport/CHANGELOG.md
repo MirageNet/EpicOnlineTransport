@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/MirrorNG/EpicOnlineTransport/compare/v1.0.0...v1.0.1) (2021-02-06)
+
+
+### Bug Fixes
+
+* Adding some try/catch make sure we catch any errors while processing data from epic. ([ec13ee8](https://github.com/MirrorNG/EpicOnlineTransport/commit/ec13ee8d5666c67cccc108fbc4632ba4f607fddd))
+
 # 1.0.0 (2021-02-06)
 
 
