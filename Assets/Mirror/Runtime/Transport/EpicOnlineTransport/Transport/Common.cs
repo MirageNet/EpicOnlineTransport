@@ -9,6 +9,7 @@ using Epic.Logging;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using EpicChill.Transport;
+using UnityEngine;
 
 #endregion
 
@@ -190,29 +191,37 @@ namespace EpicTransport
         /// </summary>
         protected async void ProcessIncomingMessages()
         {
-            while (Connected)
+            try
             {
-                while (DataAvailable(out ProductUserId clientUserID, out byte[] internalMessage,
-                    (byte)Options.Channels.Length, out SocketId socket))
+                while (Connected)
                 {
-                    if (internalMessage.Length == 1)
+                    while (DataAvailable(out ProductUserId clientUserID, out byte[] internalMessage,
+                        (byte)Options.Channels.Length, out SocketId socket))
                     {
-                        OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID, socket);
+                        if (internalMessage.Length == 1)
+                        {
+                            OnReceiveInternalData((InternalMessage)internalMessage[0], clientUserID, socket);
+                        }
+
+                        if (Transport.transportDebug)
+                            DebugLogger.RegularDebugLog("[Client] - Incorrect package length on internal channel.");
                     }
 
-                    if (Transport.transportDebug)
-                        DebugLogger.RegularDebugLog("[Client] - Incorrect package length on internal channel.");
-                }
-
-                for (int chNum = 0; chNum < Options.Channels.Length; chNum++)
-                {
-                    while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum, out SocketId _))
+                    for (int chNum = 0; chNum < Options.Channels.Length; chNum++)
                     {
-                        OnReceiveData(receiveBuffer, clientUserID, chNum);
+                        while (DataAvailable(out ProductUserId clientUserID, out byte[] receiveBuffer, (byte)chNum,
+                            out SocketId _))
+                        {
+                            OnReceiveData(receiveBuffer, clientUserID, chNum);
+                        }
                     }
-                }
 
-                await UniTask.Delay(1);
+                    await UniTask.Delay(1);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
             }
         }
 
