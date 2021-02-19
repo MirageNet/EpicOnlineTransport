@@ -79,7 +79,7 @@ namespace EpicTransport
 
         public override IEnumerable<string> Scheme => new[] { "epic" };
 
-        public override async UniTask ListenAsync()
+        public override UniTask ListenAsync()
         {
             if (!EpicManager.Initialized)
             {
@@ -87,7 +87,7 @@ namespace EpicTransport
                     if (transportDebug)
                         DebugLogger.RegularDebugLog("Epic not initialized. Server could not be started.");
 
-                return;
+                return UniTask.FromCanceled();
             }
 
             _server = new Server(this, _epicOptions);
@@ -96,7 +96,7 @@ namespace EpicTransport
 
             _listenCompletionSource = AutoResetUniTaskCompletionSource.Create();
 
-            await _listenCompletionSource.Task;
+            return _listenCompletionSource.Task;
         }
 
         /// <summary>

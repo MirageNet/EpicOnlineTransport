@@ -1,0 +1,16 @@
+{
+    "name": "com.miragenet.epic",
+    "displayName": "Mirage EpicNG",
+    "version": "1.0.1",
+    "unity": "2020.1",
+    "description": "Epic transport for Mirage",
+    "author": "Mirage",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/MirageNet/EpicOnlineTransport.git"
+    },
+    "dependencies": {
+        "com.cysharp.unitask": "2.0.36",
+        "com.miragenet.mirage": "63.3.0"
+    }
+}

@@ -26,7 +26,7 @@ namespace EpicTransport
         private byte[] _clientSendPoolData;
         private AutoResetUniTaskCompletionSource _connectedComplete;
         private readonly bool _serverControlled;
-        private bool _initialWait;
+        private bool _initialWait = true;
         internal readonly ConcurrentQueue<EpicMessage> QueuedData = new ConcurrentQueue<EpicMessage>();
 
         #endregion
@@ -162,11 +162,7 @@ namespace EpicTransport
             Options = options;
             Transport = transport;
             _serverControlled = serverControlled;
-
-            if (serverControlled)
-            {
-                _initialWait = false;
-            }
+            _initialWait = !_serverControlled;
 
             if (serverControlled) return;
 
