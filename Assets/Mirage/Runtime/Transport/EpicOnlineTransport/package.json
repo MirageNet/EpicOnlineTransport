@@ -1,7 +1,7 @@
 {
     "name": "com.miragenet.epic",
     "displayName": "Mirage EpicNG",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "unity": "2020.1",
     "description": "Epic transport for Mirage",
     "author": "Mirage",
