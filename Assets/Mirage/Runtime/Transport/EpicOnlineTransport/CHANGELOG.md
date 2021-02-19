@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/MirageNet/EpicOnlineTransport/compare/v1.0.1...v1.0.2) (2021-02-19)
+
+
+### Bug Fixes
+
+* folder names ([f890e52](https://github.com/MirageNet/EpicOnlineTransport/commit/f890e52c20d996001818e2d55f46304299a876d4))
+
 ## [1.0.1](https://github.com/MirrorNG/EpicOnlineTransport/compare/v1.0.0...v1.0.1) (2021-02-06)
 
 
