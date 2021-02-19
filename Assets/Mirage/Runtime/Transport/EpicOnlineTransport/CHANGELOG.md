@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/MirageNet/EpicOnlineTransport/compare/v1.0.2...v1.0.3) (2021-02-19)
+
+
+### Bug Fixes
+
+* namespace changes. ([c698a06](https://github.com/MirageNet/EpicOnlineTransport/commit/c698a06e42641603e6932a04026e0443621a6af3))
+
 ## [1.0.2](https://github.com/MirageNet/EpicOnlineTransport/compare/v1.0.1...v1.0.2) (2021-02-19)
 
 
