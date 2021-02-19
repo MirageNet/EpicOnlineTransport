@@ -12,16 +12,14 @@
 
 # EpicOnlineTransport
 
-Installation
-
+## Installation
 The preferred installation method is Unity Package manager.
 
-If you are using unity 2019.3 or later:
+If you are using unity 2019.3 or later: 
 
-    Open your project in unity
-    Install Mirage
-    Click on Windows -> Package Manager
-    Click on the plus sign on the left and click on "Add package from git URL..."
-    enter https://github.com/MirageNet/EpicOnlineTransport.git?path=/Assets/Mirage/Runtime/Transport/EpicOnlineTransport
-    Unity will download and install MirrorNG Ignorance
-
+1) Open your project in unity
+2) Install [Mirage](https://github.com/MirageNet/Mirage)
+3) Click on Windows -> Package Manager
+4) Click on the plus sign on the left and click on "Add package from git URL..."
+5) enter https://github.com/MirageNet/EpicOnlineTransport.git?path=/Assets/Mirage/Runtime/Transport/EpicOnlineTransport
+6) Unity will download and install MirrorNG Ignorance
