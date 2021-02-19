@@ -9,7 +9,7 @@ using Epic.Logging;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using EpicChill.Transport;
-using Mirror;
+using Mirage;
 using UnityEngine;
 using Channel = Mirror.Channel;
 
