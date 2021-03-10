@@ -11,7 +11,7 @@ using Epic.OnlineServices.P2P;
 using EpicChill.Transport;
 using Mirage;
 using UnityEngine;
-using Channel = Mirror.Channel;
+using Channel = Mirage.Channel;
 
 #endregion
 
