@@ -11,7 +11,7 @@ using Epic.OnlineServices.P2P;
 using EpicChill.Transport;
 using Mirage;
 using UnityEngine;
-using Channel = Mirror.Channel;
+using Channel = Mirage.Channel;
 
 #endregion
 
@@ -302,17 +302,15 @@ namespace EpicTransport
         /// <param name="data">The data we want to send.</param>
         /// <param name="channel">The channel we want to send data on.</param>
         /// <returns></returns>
-        public UniTask SendAsync(ArraySegment<byte> data, int channel = Channel.Reliable)
+        public void Send(ArraySegment<byte> data, int channel = Channel.Reliable)
         {
-            if (!Connected) return UniTask.CompletedTask;
+            if (!Connected) return;
 
             _clientSendPoolData = new byte[data.Count];
 
             Array.Copy(data.Array, data.Offset, _clientSendPoolData, 0, data.Count);
 
             Send(Options.ConnectionAddress, _clientSendPoolData, channel);
-
-            return UniTask.CompletedTask;
         }
 
         /// <summary>
