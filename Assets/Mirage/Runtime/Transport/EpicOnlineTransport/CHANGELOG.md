@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/MirageNet/EpicOnlineTransport/compare/v2.0.0...v2.0.1) (2021-03-13)
+
+
+### Bug Fixes
+
+* testing if android worked with epic this was not suppose to be pushed. ([e6e599a](https://github.com/MirageNet/EpicOnlineTransport/commit/e6e599a22e02e45bca8d96cf96ecd192b1217ea8))
+
 # [2.0.0](https://github.com/MirageNet/EpicOnlineTransport/compare/v1.0.3...v2.0.0) (2021-03-13)
 
 
