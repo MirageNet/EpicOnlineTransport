@@ -1,3 +1,22 @@
+# [2.0.0](https://github.com/MirageNet/EpicOnlineTransport/compare/v1.0.3...v2.0.0) (2021-03-13)
+
+
+### Bug Fixes
+
+* readmen ([01775e7](https://github.com/MirageNet/EpicOnlineTransport/commit/01775e7b8eccb793f78b624bfde25c7c6cb0cbec))
+
+
+### Code Refactoring
+
+* use Send instead of SendAsync ([f1db865](https://github.com/MirageNet/EpicOnlineTransport/commit/f1db865a7b2d2a71ad608064352b831d06a7504d))
+
+
+### BREAKING CHANGES
+
+* Compatibility with Mirage 74.0.0+
+
+Signed-off-by: dragonslaya <steve.s@bigredplanetgames.com>
+
 ## [1.0.3](https://github.com/MirageNet/EpicOnlineTransport/compare/v1.0.2...v1.0.3) (2021-02-19)
 
 
