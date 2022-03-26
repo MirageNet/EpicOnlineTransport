@@ -68,8 +68,7 @@ namespace Epic.Core
         /// <summary>
         ///     Has the epic platform been started yet.
         /// </summary>
-        public bool Initialized =>
-            Platform != null && AccountId != null;
+        public bool Initialized => Platform != null && AccountId != null;
 
         #region Epic Platforms
 
@@ -165,11 +164,6 @@ namespace Epic.Core
         {
             if (!Initialized)
                 Initialize();
-        }
-
-        public void OnDisable()
-        {
-
         }
 
         /// <summary>
