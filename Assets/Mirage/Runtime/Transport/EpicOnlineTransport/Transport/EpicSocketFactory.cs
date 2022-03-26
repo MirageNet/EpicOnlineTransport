@@ -1,12 +1,12 @@
 using System;
 using System.Net;
-using Epic.Core;
 using Mirage.SocketLayer;
+using PlayEveryWare.EpicOnlineServices;
 using UnityEngine;
 
 namespace EpicTransport
 {
-    [RequireComponent(typeof(EpicManager))]
+    [RequireComponent(typeof(EOSManager))]
     [DisallowMultipleComponent]
     public class EpicSocketFactory : SocketFactory
     {
