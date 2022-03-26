@@ -1,4 +1,4 @@
-namespace EpicChill.Transport
+namespace EpicServicesPeer
 {
     public enum InternalMessage : byte
     {

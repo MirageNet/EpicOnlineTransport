@@ -1,6 +1,6 @@
 using Epic.OnlineServices;
 
-namespace EpicChill.Transport
+namespace EpicServicesPeer
 {
     public struct EpicMessage
     {

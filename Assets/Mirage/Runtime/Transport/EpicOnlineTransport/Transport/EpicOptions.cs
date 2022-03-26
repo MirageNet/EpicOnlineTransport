@@ -7,7 +7,7 @@ using UnityEngine;
 
 #endregion
 
-namespace EpicTransport
+namespace EpicServicesPeer
 {
     [Serializable]
     public struct EpicOptions

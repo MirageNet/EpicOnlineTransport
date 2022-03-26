@@ -1,6 +1,6 @@
 {
-    "name": "Epic.Logging",
-    "rootNamespace": "",
+    "name": "EpicServices.Logging",
+    "rootNamespace": "EpicServicesLogging",
     "references": [
         "GUID:be1f6e9efffcfce41aeb5c2f4c27cf75"
     ],

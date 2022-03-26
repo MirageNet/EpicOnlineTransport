@@ -4,12 +4,18 @@ using Mirage.SocketLayer;
 using PlayEveryWare.EpicOnlineServices;
 using UnityEngine;
 
-namespace EpicTransport
+namespace EpicServicesPeer
 {
     [RequireComponent(typeof(EOSManager))]
     [DisallowMultipleComponent]
     public class EpicSocketFactory : SocketFactory
     {
+        #region Fields
+
+        [SerializeField] private EpicOptions _options = new EpicOptions();
+
+        #endregion
+
         #region Overrides of SocketFactory
 
         /// <summary>Max size for packets sent to or received from Socket
