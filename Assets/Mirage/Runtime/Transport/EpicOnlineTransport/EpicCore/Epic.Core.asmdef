@@ -3,8 +3,8 @@
     "rootNamespace": "EpicCore",
     "references": [
         "GUID:fb9fe9f3530579e45b8c67d4ba552db5",
-        "GUID:5f8e4d4b8b76b434186e4594b80e3e42",
-        "GUID:f51ebe6a0ceec4240a699833d6309b23"
+        "GUID:f51ebe6a0ceec4240a699833d6309b23",
+        "GUID:be1f6e9efffcfce41aeb5c2f4c27cf75"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

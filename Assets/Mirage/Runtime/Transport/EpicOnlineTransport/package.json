@@ -11,6 +11,7 @@
     },
     "dependencies": {
         "com.cysharp.unitask": "2.0.36",
-        "com.miragenet.mirage": "63.3.0"
+        "com.miragenet.mirage": "120.0.0"
+		"com.playeveryware.eos": "https://github.com/PlayEveryWare/eos_plugin_for_unity_upm.git"
     }
 }

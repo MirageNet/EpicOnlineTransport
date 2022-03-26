@@ -1,7 +1,8 @@
 {
     "name": "Epic.Logging",
+    "rootNamespace": "",
     "references": [
-        "GUID:5f8e4d4b8b76b434186e4594b80e3e42"
+        "GUID:be1f6e9efffcfce41aeb5c2f4c27cf75"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
