@@ -17,6 +17,15 @@
       },
       "url": "https://package.openupm.com"
     },
+    "com.playeveryware.eos": {
+      "version": "https://github.com/PlayEveryWare/eos_plugin_for_unity_upm.git",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.modules.jsonserialize": "1.0.0"
+      },
+      "hash": "b1c455b3322aeeda58be044601b2f23ffc923ac1"
+    },
     "com.unity.collab-proxy": {
       "version": "1.2.16",
       "depth": 0,
