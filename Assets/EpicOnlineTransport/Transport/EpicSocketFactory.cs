@@ -1,7 +1,9 @@
 using System;
 using System.Collections;
 using System.Linq;
+using System.Threading.Tasks;
 using Epic.OnlineServices;
+using Epic.OnlineServices.Connect;
 using Epic.OnlineServices.P2P;
 using Mirage.Logging;
 using Mirage.SocketLayer;
@@ -13,21 +15,121 @@ namespace Mirage.Sockets.Epic
 {
     public class EpicSocketFactory : SocketFactory, IEOSCoroutineOwner
     {
+        private EOSManager.EOSSingleton _eos;
+
         public override int MaxPacketSize => P2PInterface.MaxPacketSize;
+
+        private void Awake()
+        {
+            //_eos = EOSManager.Instance;
+            //_eos.Init(this);
+        }
+        private async void Start()
+        {
+            // give chance for eos to init,
+            // todo find callback to check if eos is ready
+            await Task.Delay(5000);
+
+            _eos = EOSManager.Instance;
+            ConnectInterface connect = _eos.GetEOSConnectInterface();
+            CreateDeviceIdCallbackInfo createInfo = await CreateDeviceIdAsync(connect);
+
+            // created or already exists
+            if (createInfo.ResultCode == Result.DuplicateNotAllowed)
+            {
+                Debug.Log($"<color=red>Device Id already exists</color>");
+            }
+            else
+            {
+                EpicHelper.WarnResult("Create DeviceId", createInfo.ResultCode);
+            }
+
+            if (createInfo.ResultCode != Result.Success && createInfo.ResultCode != Result.DuplicateNotAllowed)
+            {
+                return;
+            }
+
+            LoginCallbackInfo loginInfo = await LoginAsync();
+
+            EpicHelper.WarnResult("Login Callback", loginInfo.ResultCode);
+
+            ChangeRelayStatus();
+
+
+            Debug.Log($"<color=red>Relay set up, localUser={_eos.GetLocalUserId()}</color>");
+            Debug.Log($"<color=red>Relay set up, localUser={loginInfo.LocalUserId}</color>");
+        }
+
+        private static async Task<CreateDeviceIdCallbackInfo> CreateDeviceIdAsync(ConnectInterface connect)
+        {
+            var createOptions = new CreateDeviceIdOptions()
+            {
+                DeviceModel = "DemoModel"
+            };
+            CreateDeviceIdCallbackInfo createInfo = null;
+            connect.CreateDeviceId(createOptions, null, info => createInfo = info);
+            while (createInfo == null)
+                await Task.Yield();
+            return createInfo;
+        }
+
+
+        private async Task<LoginCallbackInfo> LoginAsync()
+        {
+            var credentials = new Credentials
+            {
+                Type = ExternalCredentialType.DeviceidAccessToken,
+            };
+            var userLoginInfo = new UserLoginInfo { DisplayName = "Mirage User" };
+            var options = new LoginOptions() { Credentials = credentials, UserLoginInfo = userLoginInfo, };
+
+            LoginCallbackInfo loginInfo = null;
+
+            _eos.StartConnectLoginWithOptions(options, info => loginInfo = info);
+            while (loginInfo == null)
+                await Task.Yield();
+            return loginInfo;
+        }
+
+        private void OnDestroy()
+        {
+            //_eos = EOSManager.Instance;
+            //if (_eos != null)
+            //    _eos.OnShutdown();
+        }
+        private void OnApplicationQuit()
+        {
+            //if (_eos != null)
+            //    _eos.OnShutdown();
+        }
+
+        private void ChangeRelayStatus()
+        {
+            var setRelayControlOptions = new SetRelayControlOptions();
+            setRelayControlOptions.RelayControl = RelayControl.AllowRelays;
+
+            Result result = _eos.GetEOSP2PInterface().SetRelayControl(setRelayControlOptions);
+            EpicHelper.WarnResult("Set Relay Controls", result);
+        }
+
 
         public override ISocket CreateServerSocket()
         {
-            return new EpicSocket(this);
+            _eos = EOSManager.Instance;
+            return new EpicSocket(_eos);
+        }
+
+
+        public override ISocket CreateClientSocket()
+        {
+            _eos = EOSManager.Instance;
+
+            return new EpicSocket(_eos);
         }
 
         public override IEndPoint GetBindEndPoint()
         {
             return new EpicEndPoint(null);
-        }
-
-        public override ISocket CreateClientSocket()
-        {
-            return new EpicSocket(this);
         }
 
         public override IEndPoint GetConnectEndPoint(string address = null, ushort? port = null)
@@ -37,7 +139,8 @@ namespace Mirage.Sockets.Epic
 
         void IEOSCoroutineOwner.StartCoroutine(IEnumerator routine)
         {
-            _ = base.StartCoroutine(routine);
+            // this should call the non-explicity methods from MonoBehaviour
+            _ = StartCoroutine(routine);
         }
     }
 
@@ -121,10 +224,9 @@ namespace Mirage.Sockets.Epic
         ReceivedPacket _receivedPacket;
         readonly EpicEndPoint _receiveEndPoint = new EpicEndPoint(null);
 
-        public EpicSocket(IEOSCoroutineOwner coroutineOwner)
+        public EpicSocket(EOSManager.EOSSingleton eos)
         {
-            _eos = EOSManager.Instance;
-            _eos.Init(coroutineOwner);
+            _eos = eos;
             _p2p = _eos.GetEOSP2PInterface();
             _localUser = EOSManager.Instance.GetProductUserId();
         }
@@ -208,8 +310,11 @@ namespace Mirage.Sockets.Epic
 
         public void Close()
         {
+            // todo do we need to call close on p2p?
+
             EpicHelper.DisableRelay(_p2p, _relayHandle);
             _relayHandle = default;
+
             isClosed = true;
         }
 
