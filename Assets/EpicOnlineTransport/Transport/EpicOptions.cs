@@ -10,11 +10,13 @@ using UnityEngine;
 namespace EpicServicesPeer
 {
     [Serializable]
+    [System.Obsolete("old")]
     public struct EpicOptions
     {
         public int ConnectionTimeOut;
         public int MaxConnections;
-        [Tooltip("New connection attempt on server socket id to use.")] public string SocketConnectionID;
+        [Tooltip("New connection attempt on server socket id to use.")]
+        public string SocketConnectionID;
         public ProductUserId ConnectionAddress;
         [NonSerialized] public PacketReliability[] Channels;
     }
