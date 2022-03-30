@@ -1,7 +1,6 @@
 using System;
 using System.Collections;
 using System.Linq;
-using Epic.Logging;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using Mirage.Logging;
@@ -124,8 +123,6 @@ namespace Mirage.Sockets.Epic
 
         public EpicSocket(IEOSCoroutineOwner coroutineOwner)
         {
-            DebugLogger.RegularDebugLog("[EpicSocket] - Staring up socket.");
-
             _eos = EOSManager.Instance;
             _eos.Init(coroutineOwner);
             _p2p = _eos.GetEOSP2PInterface();
@@ -165,6 +162,7 @@ namespace Mirage.Sockets.Epic
             _relayHandle = EpicHelper.EnableRelay(_p2p, _localUser, openCallback, closeCallback);
             _sendOptions = EpicHelper.CreateSendOptions(_localUser);
             _receiveOptions = EpicHelper.CreateReceiveOptions(_localUser);
+            if (EpicHelper.logger.LogEnabled()) EpicHelper.logger.Log($"Relay set up, localUser={_localUser}");
         }
 
         void openCallback(OnIncomingConnectionRequestInfo data)
