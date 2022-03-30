@@ -66,7 +66,15 @@ namespace Mirage.Examples.Basic
         public void OnStartClient()
         {
             // Make this a child of the layout panel in the Canvas
-            transform.SetParent(GameObject.Find("PlayersPanel").transform);
+            var parent = GameObject.Find("PlayersPanel");
+            if (parent == null)
+            {
+                Debug.LogWarning("Could not find PlayersPanel");
+            }
+            else
+            {
+                transform.SetParent(parent.transform);
+            }
 
             // Calculate position in the layout panel
             int x = 100 + ((playerNo % 4) * 150);
