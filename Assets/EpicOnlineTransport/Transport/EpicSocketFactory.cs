@@ -178,6 +178,14 @@ namespace Mirage.Sockets.EpicSocket
 
     public class EpicSocketFactory : SocketFactory, IEOSCoroutineOwner
     {
+        enum InitializeStatus
+        {
+            None,
+            Initializing,
+            Initialized
+        }
+        private static InitializeStatus s_isInitialize;
+
         public struct InitializeResult
         {
             /// <summary>
@@ -187,6 +195,7 @@ namespace Mirage.Sockets.EpicSocket
 
             public bool Successful => Exception == null;
         }
+
         public void Initialize(Action<InitializeResult> callback, DevAuthSettings? devAuth, string displayName = null)
         {
             UniTask.Void(async () =>
@@ -211,6 +220,21 @@ namespace Mirage.Sockets.EpicSocket
         /// <returns></returns>
         public async UniTask InitializeAsync(DevAuthSettings? devAuth, string displayName = null)
         {
+            if (s_isInitialize == InitializeStatus.Initialized)
+            {
+                Debug.LogWarning("Already Initialize");
+                return;
+            }
+            if (s_isInitialize == InitializeStatus.Initializing)
+            {
+                while (s_isInitialize == InitializeStatus.Initializing)
+                    await UniTask.Yield();
+
+                return;
+            }
+
+            s_isInitialize = InitializeStatus.Initializing;
+
             checkName(ref displayName);
 
             // wait for sdk to finish
@@ -231,6 +255,7 @@ namespace Mirage.Sockets.EpicSocket
 
             ProductUserId productId = EOSManager.Instance.GetProductUserId();
             Debug.Log($"<color=cyan>Relay set up, localUser={productId}, isNull={productId == null}</color>");
+            s_isInitialize = InitializeStatus.Initialized;
         }
 
         private static void checkName(ref string displayName)
