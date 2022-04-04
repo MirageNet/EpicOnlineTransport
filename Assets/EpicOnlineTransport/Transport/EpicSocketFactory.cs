@@ -13,6 +13,43 @@ using UnityEngine.Assertions;
 
 namespace Mirage.Sockets.Epic
 {
+    public static class EOSManagerFixer
+    {
+        // enum EOSState
+        // {
+        //     NotStarted,
+        //     Starting,
+        //     Running,
+        //     ShuttingDown,
+        //     Shutdown
+        // };
+
+
+        // todo make state public
+        //private static EOSState GetState()
+        //{
+        //    System.Reflection.FieldInfo stateField = typeof(EOSManager).GetField("s_state", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        //    var value = (EOSState)stateField.GetValue(null);
+        //    return value;
+        //}
+
+        //public static bool IsRunning()
+        //{
+        //    EOSState value = GetState();
+        //    return value == EOSState.Running;
+        //}
+
+        //public static bool IsShutdown()
+        //{
+        //    EOSState value = GetState();
+        //    return value == EOSState.Shutdown || value == EOSState.ShuttingDown;
+        //}
+
+        public static bool IsLoaded()
+        {
+            return EOSManager.Instance.GetEOSPlatformInterface() != null;
+        }
+    }
     public class EpicSocketFactory : SocketFactory, IEOSCoroutineOwner
     {
         private EOSManager.EOSSingleton _eos;
@@ -27,8 +64,8 @@ namespace Mirage.Sockets.Epic
         private async void Start()
         {
             // give chance for eos to init,
-            // todo find callback to check if eos is ready
-            await Task.Delay(5000);
+            while (!EOSManagerFixer.IsLoaded())
+                await Task.Yield();
 
             _eos = EOSManager.Instance;
             ConnectInterface connect = _eos.GetEOSConnectInterface();
@@ -311,8 +348,11 @@ namespace Mirage.Sockets.Epic
         public void Close()
         {
             // todo do we need to call close on p2p?
-
-            EpicHelper.DisableRelay(_p2p, _relayHandle);
+            // only disable if sdk is loaded
+            if (EOSManagerFixer.IsLoaded())
+            {
+                EpicHelper.DisableRelay(_p2p, _relayHandle);
+            }
             _relayHandle = default;
 
             isClosed = true;
