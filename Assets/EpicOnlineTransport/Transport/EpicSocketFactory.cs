@@ -183,16 +183,47 @@ namespace Mirage.Sockets.Epic
 
     internal sealed class EpicEndPoint : IEndPoint
     {
-        public string HostProductUserId;
-        public ProductUserId UserId;
+        private string _hostProductUserId;
+        private ProductUserId _userId;
+        public ProductUserId UserId
+        {
+            get
+            {
+                if (_userId == null)
+                {
+                    // can only get id when loaded
+                    if (EOSManagerFixer.IsLoaded())
+                    {
+                        // only call this is host Id is set
+                        if (string.IsNullOrEmpty(_hostProductUserId))
+                            throw new InvalidOperationException("Host Id is empty");
 
+                        _userId = ProductUserId.FromString(_hostProductUserId);
+                    }
+                }
+                return _userId;
+            }
+            set
+            {
+                if (!string.IsNullOrEmpty(_hostProductUserId))
+                {
+                    Assert.AreEqual(_userId, value);
+                }
+
+                _userId = value;
+            }
+        }
+
+        public EpicEndPoint() { }
         public EpicEndPoint(string hostProductUserId)
         {
-            HostProductUserId = hostProductUserId;
+            _hostProductUserId = hostProductUserId;
+            if (string.IsNullOrEmpty(_hostProductUserId))
+                throw new ArgumentException("Host Id is empty");
         }
         private EpicEndPoint(ProductUserId userId)
         {
-            UserId = userId;
+            _userId = userId;
         }
 
         IEndPoint IEndPoint.CreateCopy()
@@ -218,7 +249,7 @@ namespace Mirage.Sockets.Epic
             }
             else
             {
-                return HostProductUserId == other.HostProductUserId;
+                return _hostProductUserId == other._hostProductUserId;
             }
         }
 
@@ -231,8 +262,14 @@ namespace Mirage.Sockets.Epic
             }
             else
             {
-                return HostProductUserId.GetHashCode();
+                return _hostProductUserId.GetHashCode();
             }
+        }
+
+        internal void CopyFrom(EpicEndPoint endPoint)
+        {
+            Assert.IsNotNull(endPoint.UserId);
+            UserId = endPoint.UserId;
         }
     }
 
@@ -254,11 +291,9 @@ namespace Mirage.Sockets.Epic
         SendPacketOptions _sendOptions;
         ReceivePacketOptions _receiveOptions;
 
-        /// <summary>Used by client</summary>
-        ProductUserId _hostId;
-
         int _lastTickedFrame;
         ReceivedPacket _receivedPacket;
+        bool _isClient;
         readonly EpicEndPoint _receiveEndPoint = new EpicEndPoint(null);
 
         public EpicSocket(EOSManager.EOSSingleton eos)
@@ -284,14 +319,9 @@ namespace Mirage.Sockets.Epic
         public void Connect(IEndPoint _endPoint)
         {
             ThrowIfActive();
+            _isClient = true;
 
-            var endPoint = (EpicEndPoint)_endPoint;
-
-            if (string.IsNullOrEmpty(endPoint.HostProductUserId))
-                throw new ArgumentException("Host Id is empty");
-
-            _hostId = ProductUserId.FromString(endPoint.HostProductUserId);
-            Assert.IsNotNull(_hostId);
+            _receiveEndPoint.CopyFrom((EpicEndPoint)_endPoint);
 
             setupRelay();
         }
@@ -306,7 +336,6 @@ namespace Mirage.Sockets.Epic
 
         void openCallback(OnIncomingConnectionRequestInfo data)
         {
-
             bool validHost = checkRemoteUser(data.RemoteUserId);
             if (!validHost)
             {
@@ -326,18 +355,18 @@ namespace Mirage.Sockets.Epic
 
         bool checkRemoteUser(ProductUserId remoteUser)
         {
-            // host is null on server, and server doesn't need to check remote user
-            if (_hostId == null)
+            // and server doesn't need to check remote user
+            if (!_isClient)
                 return true;
 
             // check that remote user is host
-            return _hostId == remoteUser;
+            return _receiveEndPoint.UserId == remoteUser;
         }
 
         void closeCallback(OnRemoteConnectionClosedInfo data)
         {
             // isClient
-            if (_hostId != null)
+            if (_isClient)
             {
                 Close();
             }
@@ -409,9 +438,9 @@ namespace Mirage.Sockets.Epic
             var endPoint = (EpicEndPoint)iEndPoint;
 
             // dont set remote user if this is client (it always uses hostId)
-            if (_hostId != null)
+            if (_isClient)
             {
-                Assert.AreEqual(_hostId, endPoint.UserId);
+                Assert.AreEqual(_receiveEndPoint.UserId, endPoint.UserId);
             }
             _sendOptions.RemoteUserId = endPoint.UserId;
         }
