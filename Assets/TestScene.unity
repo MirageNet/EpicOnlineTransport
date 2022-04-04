@@ -485,8 +485,8 @@ GameObject:
   - component: {fileID: 2075391433}
   - component: {fileID: 2075391432}
   - component: {fileID: 2075391441}
-  - component: {fileID: 2075391440}
   - component: {fileID: 2075391442}
+  - component: {fileID: 2075391440}
   m_Layer: 0
   m_Name: NetworkManager
   m_TagString: Untagged
@@ -676,13 +676,18 @@ MonoBehaviour:
   m_GameObject: {fileID: 2075391431}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 81da5905cb362874ba7cbe36247debba, type: 3}
+  m_Script: {fileID: 11500000, guid: 50229103981d33d42b37b4988cbc728c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  NetworkManager: {fileID: 2075391438}
-  NetworkAddress: localhost
-  Scale: 1
-  GUIAnchor: 0
+  Manager: {fileID: 2075391438}
+  EpicSocket: {fileID: 2075391432}
+  HostAddress: <enter host>
+  UseDevAuth: 0
+  DevAuth:
+    CredentialName: <enter name>
+    Port: 7878
+  Scale: 1.3
+  GUIAnchor: 1
 --- !u!114 &2075391441
 MonoBehaviour:
   m_ObjectHideFlags: 0
