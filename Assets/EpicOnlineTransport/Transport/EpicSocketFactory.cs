@@ -1,7 +1,7 @@
 using System;
 using System.Collections;
 using System.Linq;
-using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using Epic.OnlineServices;
 using Epic.OnlineServices.Connect;
 using Epic.OnlineServices.P2P;
@@ -11,7 +11,7 @@ using PlayEveryWare.EpicOnlineServices;
 using UnityEngine;
 using UnityEngine.Assertions;
 
-namespace Mirage.Sockets.Epic
+namespace Mirage.Sockets.EpicSocket
 {
     public static class EOSManagerFixer
     {
@@ -49,95 +49,194 @@ namespace Mirage.Sockets.Epic
         {
             return EOSManager.Instance.GetEOSPlatformInterface() != null;
         }
-    }
-    public class EpicSocketFactory : SocketFactory, IEOSCoroutineOwner
-    {
-        private EOSManager.EOSSingleton _eos;
 
-        public override int MaxPacketSize => P2PInterface.MaxPacketSize;
-
-        private void Awake()
+        /// <summary>
+        /// Call that can wait for Callbacks async
+        /// </summary>
+        /// <remarks>
+        /// This must be a class not a struct, other wise copies will be made and callback wont set the _result field correctly for Wait
+        /// </remarks>
+        /// <typeparam name="T"></typeparam>
+        public class Waiter<T> where T : class
         {
-            //_eos = EOSManager.Instance;
-            //_eos.Init(this);
+            T _result;
+
+            public void Callback(T result)
+            {
+                _result = result;
+            }
+            public async UniTask<T> Wait()
+            {
+                while (_result == null)
+                {
+                    await UniTask.Yield();
+                }
+
+                return _result;
+            }
         }
-        private async void Start()
+
+    }
+
+    internal static class DeviceIdConnect
+    {
+        public static async UniTask Connect(EOSManager.EOSSingleton manager, ConnectInterface connectInterface, string displayName)
         {
-            // give chance for eos to init,
-            while (!EOSManagerFixer.IsLoaded())
-                await Task.Yield();
+            CreateDeviceIdCallbackInfo createInfo = await CreateDeviceIdAsync(connectInterface);
 
-            _eos = EOSManager.Instance;
-            ConnectInterface connect = _eos.GetEOSConnectInterface();
-            CreateDeviceIdCallbackInfo createInfo = await CreateDeviceIdAsync(connect);
+            ThrowIfResultInvalid(createInfo);
 
-            // created or already exists
+            LoginCallbackInfo loginInfo = await LoginAsync(manager, displayName);
+
+            EpicHelper.WarnResult("Login Callback", loginInfo.ResultCode);
+        }
+
+        private static void ThrowIfResultInvalid(CreateDeviceIdCallbackInfo createInfo)
+        {
+            if (createInfo.ResultCode == Result.Success)
+                return;
+
+            // already exists, this is ok
             if (createInfo.ResultCode == Result.DuplicateNotAllowed)
             {
-                Debug.Log($"<color=red>Device Id already exists</color>");
-            }
-            else
-            {
-                EpicHelper.WarnResult("Create DeviceId", createInfo.ResultCode);
-            }
-
-            if (createInfo.ResultCode != Result.Success && createInfo.ResultCode != Result.DuplicateNotAllowed)
-            {
+                EpicHelper.logger.Log($"Device Id already exists");
                 return;
             }
 
-            LoginCallbackInfo loginInfo = await LoginAsync();
-
-            EpicHelper.WarnResult("Login Callback", loginInfo.ResultCode);
-
-            ChangeRelayStatus();
-
-
-            Debug.Log($"<color=red>Relay set up, localUser={_eos.GetLocalUserId()}</color>");
-            Debug.Log($"<color=red>Relay set up, localUser={loginInfo.LocalUserId}</color>");
+            if (createInfo.ResultCode != Result.Success && createInfo.ResultCode != Result.DuplicateNotAllowed)
+                throw new EpicSocketException($"Failed to Create DeviceId, Result code: {createInfo.ResultCode}");
         }
 
-        private static async Task<CreateDeviceIdCallbackInfo> CreateDeviceIdAsync(ConnectInterface connect)
+        private static UniTask<CreateDeviceIdCallbackInfo> CreateDeviceIdAsync(ConnectInterface connect)
         {
             var createOptions = new CreateDeviceIdOptions()
             {
+                // todo get device model
+#if UNITY_EDITOR
+                DeviceModel = "DemoModel_Editor"
+#else
                 DeviceModel = "DemoModel"
+#endif
             };
-            CreateDeviceIdCallbackInfo createInfo = null;
-            connect.CreateDeviceId(createOptions, null, info => createInfo = info);
-            while (createInfo == null)
-                await Task.Yield();
-            return createInfo;
+            var waiter = new EOSManagerFixer.Waiter<CreateDeviceIdCallbackInfo>();
+            connect.CreateDeviceId(createOptions, null, waiter.Callback);
+            return waiter.Wait();
+        }
+
+        private static UniTask<LoginCallbackInfo> LoginAsync(EOSManager.EOSSingleton manager, string displayName)
+        {
+            var waiter = new EOSManagerFixer.Waiter<LoginCallbackInfo>();
+            manager.StartConnectLoginWithDeviceToken(displayName, waiter.Callback);
+            return waiter.Wait();
+        }
+    }
+
+    internal static class DevAuthLogin
+    {
+        public static async UniTask LoginAndConnect(DevAuthSettings settings)
+        {
+            // we must authenticate first,
+            // and then connect to relay
+            EpicAccountId user = await LogInWithDevAuth(settings);
+
+            await Connect(user);
+        }
+
+        private static async UniTask<EpicAccountId> LogInWithDevAuth(DevAuthSettings settings)
+        {
+            Epic.OnlineServices.Auth.LoginCredentialType type = Epic.OnlineServices.Auth.LoginCredentialType.Developer;
+            string id = $"localhost:{settings.Port}";
+            string token = settings.CredentialName;
+
+            var waiter = new EOSManagerFixer.Waiter<Epic.OnlineServices.Auth.LoginCallbackInfo>();
+            EOSManager.Instance.StartLoginWithLoginTypeAndToken(type, id, token, waiter.Callback);
+            Epic.OnlineServices.Auth.LoginCallbackInfo result = await waiter.Wait();
+
+            if (result.ResultCode != Result.Success)
+                throw new EpicSocketException($"Failed to login with Dev auth, result code={result.ResultCode}");
+
+            return result.LocalUserId;
         }
 
 
-        private async Task<LoginCallbackInfo> LoginAsync()
+        private static async UniTask Connect(EpicAccountId user)
         {
-            var credentials = new Credentials
+            var waiter = new EOSManagerFixer.Waiter<LoginCallbackInfo>();
+            EOSManager.Instance.StartConnectLoginWithEpicAccount(user, waiter.Callback);
+            LoginCallbackInfo result = await waiter.Wait();
+            if (result.ResultCode != Result.Success)
+                throw new EpicSocketException($"Failed to login with Dev auth, result code={result.ResultCode}");
+        }
+    }
+
+    [System.Serializable]
+    public struct DevAuthSettings
+    {
+        public string CredentialName;
+        public int Port;
+    }
+
+    public class EpicSocketFactory : SocketFactory, IEOSCoroutineOwner
+    {
+        public struct InitializeResult
+        {
+            /// <summary>
+            /// Exception thrown by Async task.
+            /// </summary>
+            public Exception Exception;
+
+            public bool Successful => Exception == null;
+        }
+        public void Initialize(Action<InitializeResult> callback, DevAuthSettings? devAuth, string displayName = null)
+        {
+            UniTask.Void(async () =>
             {
-                Type = ExternalCredentialType.DeviceidAccessToken,
-            };
-            var userLoginInfo = new UserLoginInfo { DisplayName = "Mirage User" };
-            var options = new LoginOptions() { Credentials = credentials, UserLoginInfo = userLoginInfo, };
+                InitializeResult result = default;
+                try
+                {
+                    await InitializeAsync(devAuth, displayName);
+                }
+                catch (Exception e)
+                {
+                    result.Exception = e;
+                }
 
-            LoginCallbackInfo loginInfo = null;
-
-            _eos.StartConnectLoginWithOptions(options, info => loginInfo = info);
-            while (loginInfo == null)
-                await Task.Yield();
-            return loginInfo;
+                callback.Invoke(result);
+            });
         }
 
-        private void OnDestroy()
+        /// <summary>
+        /// Call this before starting Mirage
+        /// </summary>
+        /// <returns></returns>
+        public async UniTask InitializeAsync(DevAuthSettings? devAuth, string displayName = null)
         {
-            //_eos = EOSManager.Instance;
-            //if (_eos != null)
-            //    _eos.OnShutdown();
+            checkName(ref displayName);
+
+            // wait for sdk to finish
+            while (!EOSManagerFixer.IsLoaded())
+                await UniTask.Yield();
+
+            if (devAuth.HasValue)
+            {
+                await DevAuthLogin.LoginAndConnect(devAuth.Value);
+            }
+            else
+            {
+                await DeviceIdConnect.Connect(EOSManager.Instance, EOSManager.Instance.GetEOSConnectInterface(), displayName);
+            }
+
+            // todo do we need this?
+            ChangeRelayStatus();
+
+            ProductUserId productId = EOSManager.Instance.GetProductUserId();
+            Debug.Log($"<color=cyan>Relay set up, localUser={productId}, isNull={productId == null}</color>");
         }
-        private void OnApplicationQuit()
+
+        private static void checkName(ref string displayName)
         {
-            //if (_eos != null)
-            //    _eos.OnShutdown();
+            if (string.IsNullOrEmpty(displayName))
+                displayName = "Default User " + UnityEngine.Random.Range(0, 1000).ToString().PadLeft(4, '0');
         }
 
         private void ChangeRelayStatus()
@@ -145,34 +244,35 @@ namespace Mirage.Sockets.Epic
             var setRelayControlOptions = new SetRelayControlOptions();
             setRelayControlOptions.RelayControl = RelayControl.AllowRelays;
 
-            Result result = _eos.GetEOSP2PInterface().SetRelayControl(setRelayControlOptions);
+            Result result = EOSManager.Instance.GetEOSP2PInterface().SetRelayControl(setRelayControlOptions);
             EpicHelper.WarnResult("Set Relay Controls", result);
         }
 
 
+        #region SocketFactory overrides
+        public override int MaxPacketSize => P2PInterface.MaxPacketSize;
+
         public override ISocket CreateServerSocket()
         {
-            _eos = EOSManager.Instance;
-            return new EpicSocket(_eos);
+            return new EpicSocket(EOSManager.Instance);
         }
-
 
         public override ISocket CreateClientSocket()
         {
-            _eos = EOSManager.Instance;
 
-            return new EpicSocket(_eos);
+            return new EpicSocket(EOSManager.Instance);
         }
 
         public override IEndPoint GetBindEndPoint()
         {
-            return new EpicEndPoint(null);
+            return new EpicEndPoint();
         }
 
         public override IEndPoint GetConnectEndPoint(string address = null, ushort? port = null)
         {
             return new EpicEndPoint(address);
         }
+        #endregion
 
         void IEOSCoroutineOwner.StartCoroutine(IEnumerator routine)
         {
@@ -281,6 +381,15 @@ namespace Mirage.Sockets.Epic
 
     internal sealed class EpicSocket : ISocket
     {
+        static void Verbose(string log)
+        {
+#if UNITY_EDITOR
+            Debug.Log(log);
+#else
+            Console.WriteLine(log);
+#endif
+        }
+
         bool isClosed;
         RelayHandle _relayHandle;
 
@@ -294,7 +403,7 @@ namespace Mirage.Sockets.Epic
         int _lastTickedFrame;
         ReceivedPacket _receivedPacket;
         bool _isClient;
-        readonly EpicEndPoint _receiveEndPoint = new EpicEndPoint(null);
+        readonly EpicEndPoint _receiveEndPoint = new EpicEndPoint();
 
         public EpicSocket(EOSManager.EOSSingleton eos)
         {
@@ -347,7 +456,8 @@ namespace Mirage.Sockets.Epic
             {
                 LocalUserId = _localUser,
                 RemoteUserId = data.RemoteUserId,
-                SocketId = data.SocketId
+                // todo do we need to need to create new here
+                SocketId = EpicHelper.CreateSocketId()
             };
             Result result = _p2p.AcceptConnection(options);
             EpicHelper.WarnResult("Accept Connection", result);
@@ -416,7 +526,12 @@ namespace Mirage.Sockets.Epic
 
             _receiveEndPoint.UserId = _receivedPacket.userId;
             endPoint = _receiveEndPoint;
-            return _receivedPacket.data.Length;
+            int length = _receivedPacket.data.Length;
+
+            // clear refs
+            _receivedPacket = default;
+            Verbose($"Receive {length} bytes from {_receivedPacket.userId}");
+            return length;
         }
 
         public void Send(IEndPoint endPoint, byte[] packet, int length)
@@ -430,7 +545,10 @@ namespace Mirage.Sockets.Epic
             _sendOptions.Data = packet.Take(length).ToArray();
 
             Result result = _p2p.SendPacket(_sendOptions);
+
             EpicHelper.WarnResult("Send Packet", result);
+
+            Verbose($"Send {length} bytes to {_receivedPacket.userId}");
         }
 
         private void setEndPoint(IEndPoint iEndPoint)
@@ -510,11 +628,16 @@ namespace Mirage.Sockets.Epic
                 p2p.RemoveNotifyPeerConnectionRequest(handle.closeId);
         }
 
+        public static SocketId CreateSocketId()
+        {
+            return new SocketId() { SocketName = "Game" };
+        }
+
         public static SendPacketOptions CreateSendOptions(ProductUserId localUser)
         {
             // random name length 20
-            string socketName = Guid.NewGuid().ToString("N").Substring(0, 20);
-            var socketId = new SocketId() { SocketName = socketName };
+            //string socketName = Guid.NewGuid().ToString("N").Substring(0, 20);
+
 
             return new SendPacketOptions()
             {
@@ -522,7 +645,7 @@ namespace Mirage.Sockets.Epic
                 Channel = 0,
                 LocalUserId = localUser,
                 Reliability = PacketReliability.UnreliableUnordered,
-                SocketId = socketId,
+                SocketId = CreateSocketId(),
 
                 RemoteUserId = null,
                 Data = null,
