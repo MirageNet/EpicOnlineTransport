@@ -1,5 +1,6 @@
 using System;
 using Cysharp.Threading.Tasks;
+using Mirage.SocketLayer;
 using UnityEngine;
 
 namespace Mirage.Sockets.EpicSocket
@@ -18,6 +19,7 @@ namespace Mirage.Sockets.EpicSocket
         [Range(0.01f, 10f)]
         public float Scale = 1f;
         public TextAnchor GUIAnchor = TextAnchor.UpperLeft;
+        private Config config;
 
         private void Awake()
         {
@@ -28,6 +30,16 @@ namespace Mirage.Sockets.EpicSocket
 #else
             DevAuth.CredentialName = "MiragePlayer";
 #endif
+
+
+            Application.runInBackground = true;
+            Application.targetFrameRate = 60;
+
+            config = new Config
+            {
+                ConnectAttemptInterval = 0.5f,
+                MaxConnectAttempts = 20,
+            };
         }
 
         private void OnGUI()
@@ -132,6 +144,7 @@ namespace Mirage.Sockets.EpicSocket
         {
             startWrapper(() =>
             {
+                Manager.Server.PeerConfig = config;
                 Manager.Server.StartServer(Manager.Client);
             });
         }
@@ -140,6 +153,7 @@ namespace Mirage.Sockets.EpicSocket
         {
             startWrapper(() =>
             {
+                Manager.Client.PeerConfig = config;
                 Manager.Client.Connect(HostAddress);
             });
         }

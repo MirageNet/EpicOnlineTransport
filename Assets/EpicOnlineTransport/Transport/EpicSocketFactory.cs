@@ -627,6 +627,8 @@ namespace Mirage.Sockets.EpicSocket
     {
         public ulong openId;
         public ulong closeId;
+        internal ulong establishedId;
+        internal ulong queueFullId;
     }
 
     internal class EpicHelper
@@ -668,13 +670,16 @@ namespace Mirage.Sockets.EpicSocket
             var openOptions = new AddNotifyPeerConnectionRequestOptions { LocalUserId = localUser, };
             var closeOptions = new AddNotifyPeerConnectionClosedOptions { LocalUserId = localUser, };
 
+            WarnResult("SetPacketQueueSize", p2p.SetPacketQueueSize(new SetPacketQueueSizeOptions { IncomingPacketQueueMaxSizeBytes = 64000, OutgoingPacketQueueMaxSizeBytes = 64000 }));
+            WarnResult("SetRelayControl", p2p.SetRelayControl(new SetRelayControlOptions { RelayControl = RelayControl.ForceRelays }));
+
             RelayHandle handle = default;
             handle.openId = p2p.AddNotifyPeerConnectionRequest(openOptions, null, (info) =>
             {
                 Verbose($"Connection Request [User:{info.RemoteUserId} Socket:{info.SocketId}]");
                 openCallback.Invoke(info);
             });
-            p2p.AddNotifyPeerConnectionEstablished(new AddNotifyPeerConnectionEstablishedOptions { LocalUserId = localUser, }, null, (info) =>
+            handle.establishedId = p2p.AddNotifyPeerConnectionEstablished(new AddNotifyPeerConnectionEstablishedOptions { LocalUserId = localUser, }, null, (info) =>
             {
                 Verbose($"Connection Established: [User:{info.RemoteUserId} Socket:{info.SocketId} Type:{info.ConnectionType}]");
             });
@@ -683,9 +688,7 @@ namespace Mirage.Sockets.EpicSocket
                 Verbose($"Connection Closed [User:{info.RemoteUserId} Socket:{info.SocketId} Reason:{info.Reason}]");
                 closedCallback.Invoke(info);
             });
-            WarnResult("SetPacketQueueSize", p2p.SetPacketQueueSize(new SetPacketQueueSizeOptions { IncomingPacketQueueMaxSizeBytes = 64000, OutgoingPacketQueueMaxSizeBytes = 64000 }));
-            WarnResult("SetRelayControl", p2p.SetRelayControl(new SetRelayControlOptions { RelayControl = RelayControl.ForceRelays }));
-            p2p.AddNotifyIncomingPacketQueueFull(new AddNotifyIncomingPacketQueueFullOptions { }, null, (info) =>
+            handle.queueFullId = p2p.AddNotifyIncomingPacketQueueFull(new AddNotifyIncomingPacketQueueFullOptions { }, null, (info) =>
             {
                 Verbose($"Incoming Packet Queue Full");
             });
@@ -705,7 +708,13 @@ namespace Mirage.Sockets.EpicSocket
                 p2p.RemoveNotifyPeerConnectionRequest(handle.openId);
 
             if (handle.closeId != Common.InvalidNotificationid)
-                p2p.RemoveNotifyPeerConnectionRequest(handle.closeId);
+                p2p.RemoveNotifyPeerConnectionClosed(handle.closeId);
+
+            if (handle.queueFullId != Common.InvalidNotificationid)
+                p2p.RemoveNotifyIncomingPacketQueueFull(handle.queueFullId);
+
+            if (handle.establishedId != Common.InvalidNotificationid)
+                p2p.RemoveNotifyPeerConnectionEstablished(handle.establishedId);
         }
 
         public static SocketId CreateSocketId()
