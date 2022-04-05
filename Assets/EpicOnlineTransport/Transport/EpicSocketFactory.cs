@@ -152,20 +152,57 @@ namespace Mirage.Sockets.EpicSocket
             EOSManager.Instance.StartLoginWithLoginTypeAndToken(type, id, token, waiter.Callback);
             Epic.OnlineServices.Auth.LoginCallbackInfo result = await waiter.Wait();
 
+            EpicAccountId epicAccountId = result.LocalUserId;
+            if (result.ResultCode == Result.InvalidUser)
+                epicAccountId = await CreateNewAccount(result.ContinuanceToken);
+            else if (result.ResultCode != Result.Success)
+                throw new EpicSocketException($"Failed to login with Dev auth, result code={result.ResultCode}");
+
+            return epicAccountId;
+        }
+
+        private static async UniTask<EpicAccountId> CreateNewAccount(ContinuanceToken continuanceToken)
+        {
+            Debug.Log($"Trying Auth link with external account: {continuanceToken}");
+
+            var waiter = new EOSManagerFixer.Waiter<Epic.OnlineServices.Auth.LinkAccountCallbackInfo>();
+            EOSManager.Instance.AuthLinkExternalAccountWithContinuanceToken(continuanceToken, Epic.OnlineServices.Auth.LinkAccountFlags.NoFlags, waiter.Callback);
+            Epic.OnlineServices.Auth.LinkAccountCallbackInfo result = await waiter.Wait();
             if (result.ResultCode != Result.Success)
                 throw new EpicSocketException($"Failed to login with Dev auth, result code={result.ResultCode}");
 
+            EpicHelper.Verbose($"Create New Account: [User:{result.ResultCode} Selected:{result.SelectedAccountId}]");
             return result.LocalUserId;
         }
 
-
         private static async UniTask Connect(EpicAccountId user)
+        {
+            LoginCallbackInfo firstTry = await _connect(user);
+
+            Result result = firstTry.ResultCode;
+            if (result == Result.InvalidUser)
+            {
+                // ask user if they want to connect; sample assumes they do
+                var createWaiter = new EOSManagerFixer.Waiter<CreateUserCallbackInfo>();
+                EOSManager.Instance.CreateConnectUserWithContinuanceToken(firstTry.ContinuanceToken, createWaiter.Callback);
+                CreateUserCallbackInfo createResult = await createWaiter.Wait();
+
+                Debug.Log("Created new account");
+
+                LoginCallbackInfo secondTry = await _connect(user);
+                result = secondTry.ResultCode;
+            }
+
+            if (result != Result.Success)
+                throw new EpicSocketException($"Failed to login with Dev auth, result code={result}");
+        }
+
+        private static async UniTask<LoginCallbackInfo> _connect(EpicAccountId user)
         {
             var waiter = new EOSManagerFixer.Waiter<LoginCallbackInfo>();
             EOSManager.Instance.StartConnectLoginWithEpicAccount(user, waiter.Callback);
             LoginCallbackInfo result = await waiter.Wait();
-            if (result.ResultCode != Result.Success)
-                throw new EpicSocketException($"Failed to login with Dev auth, result code={result.ResultCode}");
+            return result;
         }
     }
 
@@ -406,15 +443,6 @@ namespace Mirage.Sockets.EpicSocket
 
     internal sealed class EpicSocket : ISocket
     {
-        static void Verbose(string log)
-        {
-#if UNITY_EDITOR
-            Debug.Log(log);
-#else
-            Console.WriteLine(log);
-#endif
-        }
-
         bool isClosed;
         RelayHandle _relayHandle;
 
@@ -555,7 +583,7 @@ namespace Mirage.Sockets.EpicSocket
 
             // clear refs
             _receivedPacket = default;
-            Verbose($"Receive {length} bytes from {_receivedPacket.userId}");
+            EpicHelper.Verbose($"Receive {length} bytes from {_receivedPacket.userId}");
             return length;
         }
 
@@ -573,7 +601,7 @@ namespace Mirage.Sockets.EpicSocket
 
             EpicHelper.WarnResult("Send Packet", result);
 
-            Verbose($"Send {length} bytes to {_receivedPacket.userId}");
+            EpicHelper.Verbose($"Send {length} bytes to {_sendOptions.RemoteUserId}");
         }
 
         private void setEndPoint(IEndPoint iEndPoint)
@@ -619,6 +647,15 @@ namespace Mirage.Sockets.EpicSocket
                 logger.LogWarning($"{tag} failed with result: {result}");
         }
 
+        internal static void Verbose(string log)
+        {
+#if UNITY_EDITOR
+            Debug.Log(log);
+#else
+            Console.WriteLine(log);
+#endif
+        }
+
         protected EpicHelper() { }
 
         /// <summary>
@@ -632,8 +669,26 @@ namespace Mirage.Sockets.EpicSocket
             var closeOptions = new AddNotifyPeerConnectionClosedOptions { LocalUserId = localUser, };
 
             RelayHandle handle = default;
-            handle.openId = p2p.AddNotifyPeerConnectionRequest(openOptions, null, openCallback);
-            handle.closeId = p2p.AddNotifyPeerConnectionClosed(closeOptions, null, closedCallback);
+            handle.openId = p2p.AddNotifyPeerConnectionRequest(openOptions, null, (info) =>
+            {
+                Verbose($"Connection Request [User:{info.RemoteUserId} Socket:{info.SocketId}]");
+                openCallback.Invoke(info);
+            });
+            p2p.AddNotifyPeerConnectionEstablished(new AddNotifyPeerConnectionEstablishedOptions { LocalUserId = localUser, }, null, (info) =>
+            {
+                Verbose($"Connection Established: [User:{info.RemoteUserId} Socket:{info.SocketId} Type:{info.ConnectionType}]");
+            });
+            handle.closeId = p2p.AddNotifyPeerConnectionClosed(closeOptions, null, (info) =>
+            {
+                Verbose($"Connection Closed [User:{info.RemoteUserId} Socket:{info.SocketId} Reason:{info.Reason}]");
+                closedCallback.Invoke(info);
+            });
+            WarnResult("SetPacketQueueSize", p2p.SetPacketQueueSize(new SetPacketQueueSizeOptions { IncomingPacketQueueMaxSizeBytes = 64000, OutgoingPacketQueueMaxSizeBytes = 64000 }));
+            WarnResult("SetRelayControl", p2p.SetRelayControl(new SetRelayControlOptions { RelayControl = RelayControl.ForceRelays }));
+            p2p.AddNotifyIncomingPacketQueueFull(new AddNotifyIncomingPacketQueueFullOptions { }, null, (info) =>
+            {
+                Verbose($"Incoming Packet Queue Full");
+            });
 
             if (handle.openId == Common.InvalidNotificationid)
                 throw new EpicSocketException("Failed add ConnectionRequest");
