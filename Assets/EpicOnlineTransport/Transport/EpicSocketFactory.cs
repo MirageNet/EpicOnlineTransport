@@ -554,6 +554,11 @@ namespace Mirage.Sockets.EpicSocket
         public bool Poll()
         {
             if (isClosed) return false;
+            if (!EOSManagerFixer.IsLoaded())
+            {
+                EpicHelper.logger.LogWarning("Calling when when EOS is not loaded");
+                return false;
+            }
 
             // first time this tick?
             if (_lastTickedFrame != Time.frameCount)
@@ -590,6 +595,11 @@ namespace Mirage.Sockets.EpicSocket
         public void Send(IEndPoint endPoint, byte[] packet, int length)
         {
             if (isClosed) return;
+            if (!EOSManagerFixer.IsLoaded())
+            {
+                EpicHelper.logger.LogWarning("Calling when when EOS is not loaded");
+                return;
+            }
 
             setEndPoint(endPoint);
 
