@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
@@ -18,8 +18,7 @@ namespace Mirage.Sockets.EpicSocket
         ReceivePacketOptions _receiveOptions;
 
         int _lastTickedFrame;
-        ReceivedPacket _receivedPacket;
-        bool _isClient;
+        ReceivedPacket _nextPacket;
         readonly EpicEndPoint _receiveEndPoint = new EpicEndPoint();
 
         public EpicSocket(RelayHandle relayHandle)
@@ -41,10 +40,6 @@ namespace Mirage.Sockets.EpicSocket
         public void Connect(IEndPoint _endPoint)
         {
             ThrowIfRelayNotActive();
-            _isClient = true;
-
-            _receiveEndPoint.CopyFrom((EpicEndPoint)_endPoint);
-            _relayHandle.ConnectToRemoteUser(_receiveEndPoint.UserId);
         }
 
         public void Close()
@@ -83,7 +78,7 @@ namespace Mirage.Sockets.EpicSocket
             }
 
             // todo do we need to do anything with socketid or channel?
-            Result result = _relayHandle.P2P.ReceivePacket(_receiveOptions, out _receivedPacket.userId, out SocketId _, out byte _, out _receivedPacket.data);
+            Result result = _relayHandle.P2P.ReceivePacket(_receiveOptions, out _nextPacket.userId, out SocketId _, out byte _, out _nextPacket.data);
 
             if (result != Result.Success && result != Result.NotFound) // log for results other than Success/NotFound
                 EpicLogger.WarnResult("Receive Packet", result);
@@ -93,17 +88,17 @@ namespace Mirage.Sockets.EpicSocket
 
         public int Receive(byte[] buffer, out IEndPoint endPoint)
         {
-            Assert.IsNotNull(_receivedPacket.data);
+            Assert.IsNotNull(_nextPacket.data);
 
-            Buffer.BlockCopy(_receivedPacket.data, 0, buffer, 0, _receivedPacket.data.Length);
+            Buffer.BlockCopy(_nextPacket.data, 0, buffer, 0, _nextPacket.data.Length);
 
-            _receiveEndPoint.UserId = _receivedPacket.userId;
+            _receiveEndPoint.UserId = _nextPacket.userId;
             endPoint = _receiveEndPoint;
-            int length = _receivedPacket.data.Length;
+            int length = _nextPacket.data.Length;
 
             // clear refs
-            _receivedPacket = default;
-            EpicLogger.Verbose($"Receive {length} bytes from {_receivedPacket.userId}");
+            _nextPacket = default;
+            EpicLogger.Verbose($"Receive {length} bytes from {_nextPacket.userId}");
             return length;
         }
 
@@ -119,18 +114,6 @@ namespace Mirage.Sockets.EpicSocket
             _relayHandle.SendGameData(endPoint.UserId, data);
 
             EpicLogger.Verbose($"Send {length} bytes to {_sendOptions.RemoteUserId}");
-        }
-
-        private void setEndPoint(IEndPoint iEndPoint)
-        {
-            var endPoint = (EpicEndPoint)iEndPoint;
-
-            // dont set remote user if this is client (it always uses hostId)
-            if (_isClient)
-            {
-                Assert.AreEqual(_receiveEndPoint.UserId, endPoint.UserId);
-            }
-            _sendOptions.RemoteUserId = endPoint.UserId;
         }
     }
 }

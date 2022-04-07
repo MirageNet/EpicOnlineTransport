@@ -45,6 +45,7 @@ namespace Mirage.Sockets.EpicSocket
 
             return s_instance;
         }
+
         public RelayHandle(EOSManager.EOSSingleton manager)
         {
             Manager = manager;
@@ -79,6 +80,9 @@ namespace Mirage.Sockets.EpicSocket
         /// <param name="remoteUser"></param>
         public void ConnectToRemoteUser(ProductUserId remoteUser)
         {
+            if (_remoteUser != null && _remoteUser != remoteUser)
+                throw new InvalidOperationException("Already connected to another host");
+
             _remoteUser = remoteUser ?? throw new ArgumentNullException(nameof(remoteUser));
         }
 
@@ -222,35 +226,34 @@ namespace Mirage.Sockets.EpicSocket
         }
 
 
-
         // todo find way to send byte[] with length
         public void SendGameData(ProductUserId userId, byte[] data)
         {
             _sendOptions.Channel = CHANNEL_GAME;
             _sendOptions.Data = data;
             _sendOptions.RemoteUserId = userId;
+            _sendOptions.Reliability = PacketReliability.UnreliableUnordered;
             sendUsingOptions();
         }
 
-        public void SendCommand(ProductUserId userId, byte info)
+        public void SendCommand(ProductUserId userId, byte opcode)
         {
             _sendOptions.Channel = CHANNEL_COMMAND;
-            _singleByteCommand[0] = info;
+            _singleByteCommand[0] = opcode;
             _sendOptions.Data = _singleByteCommand;
             _sendOptions.RemoteUserId = userId;
-            sendUsingOptions();
-        }
-
-        public void SendCommand(ProductUserId userId, byte[] info)
-        {
-            _sendOptions.Channel = CHANNEL_COMMAND;
-            _sendOptions.Data = info;
-            _sendOptions.RemoteUserId = userId;
+            _sendOptions.Reliability = PacketReliability.ReliableUnordered;
             sendUsingOptions();
         }
 
         private void sendUsingOptions()
         {
+            // check client is only sending to Host
+            if (_remoteUser != null)
+            {
+                Assert.AreEqual(_remoteUser, _sendOptions.RemoteUserId);
+            }
+
             Result result = P2P.SendPacket(_sendOptions);
             EpicLogger.WarnResult("Send Packet", result);
         }

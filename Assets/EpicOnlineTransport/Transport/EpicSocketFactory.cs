@@ -1,18 +1,28 @@
 using System;
+using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
+using Mirage.Logging;
 using Mirage.SocketLayer;
 using PlayEveryWare.EpicOnlineServices;
 using UnityEngine;
+using UnityEngine.Assertions;
 
 namespace Mirage.Sockets.EpicSocket
 {
     public class EpicSocketFactory : SocketFactory
     {
-        private static InitializeStatus s_isInitialize;
+        private static InitializeStatus s_status;
 
-        RelayHandle relayHandle;
+        RelayHandle _relayHandle;
+        CommandHandler _commandHandler;
+
+        private void Update()
+        {
+            if (_relayHandle != null && _relayHandle.CheckOpen())
+                _commandHandler?.Update();
+        }
 
         public void Initialize(Action<InitializeResult> callback, DevAuthSettings? devAuth, string displayName = null)
         {
@@ -38,20 +48,20 @@ namespace Mirage.Sockets.EpicSocket
         /// <returns></returns>
         public async UniTask InitializeAsync(DevAuthSettings? devAuth, string displayName = null)
         {
-            if (s_isInitialize == InitializeStatus.Initialized)
+            if (s_status == InitializeStatus.Initialized)
             {
                 Debug.LogWarning("Already Initialize");
                 return;
             }
-            if (s_isInitialize == InitializeStatus.Initializing)
+            if (s_status == InitializeStatus.Initializing)
             {
-                while (s_isInitialize == InitializeStatus.Initializing)
+                while (s_status == InitializeStatus.Initializing)
                     await UniTask.Yield();
 
                 return;
             }
 
-            s_isInitialize = InitializeStatus.Initializing;
+            s_status = InitializeStatus.Initializing;
 
             checkName(ref displayName);
 
@@ -74,18 +84,48 @@ namespace Mirage.Sockets.EpicSocket
             ProductUserId productId = EOSManager.Instance.GetProductUserId();
             Debug.Log($"<color=cyan>Connected to EOS, localUser={productId}, isNull={productId == null}</color>");
 
-            relayHandle = new RelayHandle(EOSManager.Instance);
-            relayHandle.OpenRelay();
-            s_isInitialize = InitializeStatus.Initialized;
+            s_status = InitializeStatus.Initialized;
         }
 
-        public void StartAsClient(ProductUserId remoteHost)
+        public async UniTask StartAsClient(ProductUserId remoteHost)
         {
-            throw new System.NotImplementedException();
+            if (s_status != InitializeStatus.Initialized)
+                throw new InvalidOperationException("Most be Initialized before calling Start");
+
+            _relayHandle = new RelayHandle(EOSManager.Instance);
+            _relayHandle.OpenRelay();
+            _relayHandle.ConnectToRemoteUser(remoteHost);
+
+            _commandHandler = new CommandHandler(_relayHandle);
+
+            // send join request to host
+            _relayHandle.SendCommand(remoteHost, CommandHandler.REQUEST_JOIN);
+
+            // wait for reply
+            var waiter = new AsyncWaiter<ProductUserId>();
+            _commandHandler.AddHandler(CommandHandler.ACCEPT_JOIN, waiter.Callback);
+            ProductUserId other = await waiter.Wait();
+            Assert.AreEqual(remoteHost, other);
         }
+
         public void StartAsHost()
         {
-            throw new System.NotImplementedException();
+            if (s_status != InitializeStatus.Initialized)
+                throw new InvalidOperationException("Most be Initialized before calling Start");
+
+            _relayHandle = new RelayHandle(EOSManager.Instance);
+            _relayHandle.OpenRelay();
+
+            _commandHandler = new CommandHandler(_relayHandle);
+
+            // listen for join requests from users
+            _commandHandler.AddHandler(CommandHandler.REQUEST_JOIN, AcceptUser);
+        }
+
+        void AcceptUser(ProductUserId remoteUser)
+        {
+            // accept user once they request
+            _relayHandle.SendCommand(remoteUser, CommandHandler.ACCEPT_JOIN);
         }
 
         private static void checkName(ref string displayName)
@@ -109,28 +149,30 @@ namespace Mirage.Sockets.EpicSocket
 
         public override ISocket CreateServerSocket()
         {
-            if (relayHandle == null && relayHandle.IsOpen)
+            if (_relayHandle == null && _relayHandle.IsOpen)
                 throw new InvalidOperationException("Relay now active, Call Initialize first");
 
-            return new EpicSocket(relayHandle);
+            return new EpicSocket(_relayHandle);
         }
 
         public override ISocket CreateClientSocket()
         {
-            if (relayHandle == null && relayHandle.IsOpen)
+            if (_relayHandle == null && _relayHandle.IsOpen)
                 throw new InvalidOperationException("Relay now active, Call Initialize first");
 
-            return new EpicSocket(relayHandle);
+            return new EpicSocket(_relayHandle);
         }
 
         public override IEndPoint GetBindEndPoint()
         {
-            return new EpicEndPoint();
+            // endpoint is handled inside socket
+            return null;
         }
 
         public override IEndPoint GetConnectEndPoint(string address = null, ushort? port = null)
         {
-            return new EpicEndPoint(address);
+            // endpoint is handled inside socket, client should pre-connect relay before starting socket. See StartAsClient
+            return null;
         }
         #endregion
 
@@ -149,6 +191,41 @@ namespace Mirage.Sockets.EpicSocket
             public Exception Exception;
 
             public bool Successful => Exception == null;
+        }
+    }
+
+    internal class CommandHandler
+    {
+        public const int REQUEST_JOIN = 0;
+        public const int ACCEPT_JOIN = 1;
+
+        readonly Dictionary<int, Action<ProductUserId>> handlers = new Dictionary<int, Action<ProductUserId>>();
+        readonly RelayHandle _relayHandle;
+
+        public CommandHandler(RelayHandle relayHandle)
+        {
+            _relayHandle = relayHandle;
+        }
+
+        public void AddHandler(int command, Action<ProductUserId> handle)
+        {
+            handlers.Add(command, handle);
+        }
+
+        public void Update()
+        {
+            while (_relayHandle.ReceiveCommand(out ReceivedPacket packet))
+            {
+                byte opcode = packet.data[0];
+                if (handlers.TryGetValue(opcode, out Action<ProductUserId> handler))
+                {
+                    handler.Invoke(packet.userId);
+                }
+                else
+                {
+                    EpicLogger.logger.LogWarning($"Unknown command {opcode}");
+                }
+            }
         }
     }
 }

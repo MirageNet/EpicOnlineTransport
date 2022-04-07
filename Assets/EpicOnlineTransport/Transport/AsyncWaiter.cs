@@ -1,4 +1,4 @@
-﻿using Cysharp.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 
 namespace Mirage.Sockets.EpicSocket
 {
@@ -10,22 +10,22 @@ namespace Mirage.Sockets.EpicSocket
     /// </remarks>
     /// <typeparam name="T"></typeparam>
     public class AsyncWaiter<T> where T : class
+    {
+        T _result;
+
+        public void Callback(T result)
         {
-            T _result;
-
-            public void Callback(T result)
-            {
-                _result = result;
-            }
-            public async UniTask<T> Wait()
-            {
-                while (_result == null)
-                {
-                    await UniTask.Yield();
-                }
-
-                return _result;
-            }
+            _result = result;
         }
+        public async UniTask<T> Wait()
+        {
+            while (_result == null)
+            {
+                await UniTask.Yield();
+            }
+
+            return _result;
+        }
+    }
 }
 

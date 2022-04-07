@@ -1,6 +1,6 @@
 using System;
 using Cysharp.Threading.Tasks;
-using Mirage.SocketLayer;
+using Epic.OnlineServices;
 using UnityEngine;
 
 namespace Mirage.Sockets.EpicSocket
@@ -19,7 +19,7 @@ namespace Mirage.Sockets.EpicSocket
         [Range(0.01f, 10f)]
         public float Scale = 1f;
         public TextAnchor GUIAnchor = TextAnchor.UpperLeft;
-        private Config config;
+        //private Config config;
 
         private void Awake()
         {
@@ -35,11 +35,11 @@ namespace Mirage.Sockets.EpicSocket
             Application.runInBackground = true;
             Application.targetFrameRate = 60;
 
-            config = new Config
-            {
-                ConnectAttemptInterval = 0.5f,
-                MaxConnectAttempts = 20,
-            };
+            //config = new Config
+            //{
+            //    ConnectAttemptInterval = 0.5f,
+            //    MaxConnectAttempts = 20,
+            //};
         }
 
         private void OnGUI()
@@ -93,7 +93,7 @@ namespace Mirage.Sockets.EpicSocket
                 HostAddress = GUILayout.TextField(HostAddress);
                 if (GUILayout.Button("Start Client"))
                 {
-                    StartClient();
+                    StartClient(HostAddress);
                 }
             }
         }
@@ -144,18 +144,20 @@ namespace Mirage.Sockets.EpicSocket
         {
             startWrapper(() =>
             {
-                Manager.Server.PeerConfig = config;
+                EpicSocket.StartAsHost();
+                //Manager.Server.PeerConfig = config;
                 Manager.Server.StartServer(Manager.Client);
             });
         }
 
-        public void StartClient()
+        public void StartClient(string productId)
         {
-            startWrapper(() =>
+            startWrapper(UniTask.Action(async () =>
             {
-                Manager.Client.PeerConfig = config;
-                Manager.Client.Connect(HostAddress);
-            });
+                var hostId = ProductUserId.FromString(productId);
+                await EpicSocket.StartAsClient(hostId);
+                Manager.Client.Connect();
+            }));
         }
 
 
