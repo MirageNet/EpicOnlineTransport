@@ -88,7 +88,7 @@ namespace Mirage.Sockets.EpicSocket
 
             LoginCallbackInfo loginInfo = await LoginAsync(manager, displayName);
 
-            EpicHelper.WarnResult("Login Callback", loginInfo.ResultCode);
+            EpicLogger.WarnResult("Login Callback", loginInfo.ResultCode);
         }
 
         private static void ThrowIfResultInvalid(CreateDeviceIdCallbackInfo createInfo)
@@ -99,7 +99,7 @@ namespace Mirage.Sockets.EpicSocket
             // already exists, this is ok
             if (createInfo.ResultCode == Result.DuplicateNotAllowed)
             {
-                EpicHelper.logger.Log($"Device Id already exists");
+                EpicLogger.logger.Log($"Device Id already exists");
                 return;
             }
 
@@ -171,7 +171,7 @@ namespace Mirage.Sockets.EpicSocket
             if (result.ResultCode != Result.Success)
                 throw new EpicSocketException($"Failed to login with Dev auth, result code={result.ResultCode}");
 
-            EpicHelper.Verbose($"Create New Account: [User:{result.ResultCode} Selected:{result.SelectedAccountId}]");
+            EpicLogger.Verbose($"Create New Account: [User:{result.ResultCode} Selected:{result.SelectedAccountId}]");
             return result.LocalUserId;
         }
 
@@ -232,6 +232,8 @@ namespace Mirage.Sockets.EpicSocket
 
             public bool Successful => Exception == null;
         }
+
+        RelayHandle relayHandle;
 
         public void Initialize(Action<InitializeResult> callback, DevAuthSettings? devAuth, string displayName = null)
         {
@@ -307,7 +309,7 @@ namespace Mirage.Sockets.EpicSocket
             setRelayControlOptions.RelayControl = RelayControl.AllowRelays;
 
             Result result = EOSManager.Instance.GetEOSP2PInterface().SetRelayControl(setRelayControlOptions);
-            EpicHelper.WarnResult("Set Relay Controls", result);
+            EpicLogger.WarnResult("Set Relay Controls", result);
         }
 
 
@@ -316,13 +318,18 @@ namespace Mirage.Sockets.EpicSocket
 
         public override ISocket CreateServerSocket()
         {
-            return new EpicSocket(EOSManager.Instance);
+            if (relayHandle == null && relayHandle.IsOpen)
+                throw new InvalidOperationException("Relay now active, Call Initialize first");
+
+            return new EpicSocket(relayHandle);
         }
 
         public override ISocket CreateClientSocket()
         {
+            if (relayHandle == null && relayHandle.IsOpen)
+                throw new InvalidOperationException("Relay now active, Call Initialize first");
 
-            return new EpicSocket(EOSManager.Instance);
+            return new EpicSocket(relayHandle);
         }
 
         public override IEndPoint GetBindEndPoint()
@@ -441,14 +448,281 @@ namespace Mirage.Sockets.EpicSocket
         public EpicSocketException(string message) : base(message) { }
     }
 
+    internal class RelayHandle
+    {
+        const int CHANNEL_GAME = 0;
+        const int CHANNEL_COMMAND = 1;
+
+        public readonly EOSManager.EOSSingleton Manager;
+        public readonly P2PInterface P2P;
+        public readonly ProductUserId LocalUser;
+
+        ulong _openId;
+        ulong _closeId;
+        ulong _establishedId;
+        ulong _queueFullId;
+        ProductUserId _remoteUser;
+        SendPacketOptions _sendOptions;
+        ReceivePacketOptions _receiveOptions;
+        byte[] _singleByteCommand = new byte[1];
+
+        public bool IsOpen { get; private set; }
+
+        static RelayHandle s_instance;
+
+        public static RelayHandle GetOrCreate(EOSManager.EOSSingleton manager)
+        {
+            if (s_instance == null)
+            {
+                s_instance = new RelayHandle(manager);
+            }
+            Assert.AreEqual(manager, s_instance.Manager);
+
+            return s_instance;
+        }
+        public RelayHandle(EOSManager.EOSSingleton manager)
+        {
+            Manager = manager;
+            P2P = manager.GetEOSP2PInterface();
+            LocalUser = manager.GetProductUserId();
+        }
+
+        public void OpenRelay()
+        {
+            if (IsOpen)
+                throw new InvalidOperationException("Already open");
+
+            IsOpen = true;
+            enableRelay(connectionRequestCallback, connectionClosedCallback);
+            _sendOptions = createSendOptions();
+            _receiveOptions = createReceiveOptions();
+        }
+
+        public void CloseRelay()
+        {
+            if (!IsOpen)
+                return;
+            IsOpen = false;
+
+            DisableRelay();
+        }
+
+        /// <summary>
+        /// Limit incoming message from a single user
+        /// <para>Useful for clients to only receive messager from Host</para>
+        /// </summary>
+        /// <param name="remoteUser"></param>
+        public void ConnectToRemoteUser(ProductUserId remoteUser)
+        {
+            _remoteUser = remoteUser ?? throw new ArgumentNullException(nameof(remoteUser));
+        }
+
+        void connectionRequestCallback(OnIncomingConnectionRequestInfo data)
+        {
+            bool validHost = checkRemoteUser(data.RemoteUserId);
+            if (!validHost)
+            {
+                EpicLogger.logger.LogError($"User ({data.RemoteUserId}) tried to connect to client");
+                return;
+            }
+
+            var options = new AcceptConnectionOptions()
+            {
+                LocalUserId = LocalUser,
+                RemoteUserId = data.RemoteUserId,
+                // todo do we need to need to create new here
+                SocketId = createSocketId()
+            };
+            Result result = P2P.AcceptConnection(options);
+            EpicLogger.WarnResult("Accept Connection", result);
+        }
+
+        bool checkRemoteUser(ProductUserId remoteUser)
+        {
+            // host remote user, no need to check it
+            if (_remoteUser == null)
+                return true;
+
+            // check incoming message is from expected user
+            return _remoteUser == remoteUser;
+        }
+
+        void connectionClosedCallback(OnRemoteConnectionClosedInfo data)
+        {
+            // if we have set remoteUser, then close is probably from them, so we want to close the socket
+            if (_remoteUser != null)
+            {
+                CloseRelay();
+            }
+
+            if (EpicLogger.logger.WarnEnabled()) EpicLogger.logger.LogWarning($"Connection closed with reason: {data.Reason}");
+        }
+
+
+        /// <summary>
+        /// Starts relay as server, allows new connections
+        /// </summary>
+        /// <param name="notifyId"></param>
+        /// <param name="socketName"></param>
+        void enableRelay(OnIncomingConnectionRequestCallback openCallback, OnRemoteConnectionClosedCallback closedCallback)
+        {
+            //EpicHelper.WarnResult("SetPacketQueueSize", p2p.SetPacketQueueSize(new SetPacketQueueSizeOptions { IncomingPacketQueueMaxSizeBytes = 64000, OutgoingPacketQueueMaxSizeBytes = 64000 }));
+            //EpicHelper.WarnResult("SetRelayControl", p2p.SetRelayControl(new SetRelayControlOptions { RelayControl = RelayControl.ForceRelays }));
+
+            AddHandle(ref _openId, P2P.AddNotifyPeerConnectionRequest(new AddNotifyPeerConnectionRequestOptions { LocalUserId = LocalUser, }, null, (info) =>
+            {
+                EpicLogger.Verbose($"Connection Request [User:{info.RemoteUserId} Socket:{info.SocketId}]");
+                openCallback.Invoke(info);
+            }));
+            AddHandle(ref _openId, P2P.AddNotifyPeerConnectionEstablished(new AddNotifyPeerConnectionEstablishedOptions { LocalUserId = LocalUser, }, null, (info) =>
+            {
+                EpicLogger.Verbose($"Connection Established: [User:{info.RemoteUserId} Socket:{info.SocketId} Type:{info.ConnectionType}]");
+            }));
+            AddHandle(ref _openId, P2P.AddNotifyPeerConnectionClosed(new AddNotifyPeerConnectionClosedOptions { LocalUserId = LocalUser, }, null, (info) =>
+             {
+                 EpicLogger.Verbose($"Connection Closed [User:{info.RemoteUserId} Socket:{info.SocketId} Reason:{info.Reason}]");
+                 closedCallback.Invoke(info);
+             }));
+            AddHandle(ref _openId, P2P.AddNotifyIncomingPacketQueueFull(new AddNotifyIncomingPacketQueueFullOptions { }, null, (info) =>
+            {
+                EpicLogger.Verbose($"Incoming Packet Queue Full");
+            }));
+        }
+
+        void DisableRelay()
+        {
+            // todo do we need to call close on p2p?
+            // only disable if sdk is loaded
+            if (!EOSManagerFixer.IsLoaded())
+                return;
+
+            RemoveHandle(ref _openId, P2P.RemoveNotifyPeerConnectionRequest);
+            RemoveHandle(ref _closeId, P2P.RemoveNotifyPeerConnectionClosed);
+            RemoveHandle(ref _establishedId, P2P.RemoveNotifyPeerConnectionEstablished);
+            RemoveHandle(ref _queueFullId, P2P.RemoveNotifyIncomingPacketQueueFull);
+        }
+
+        static void AddHandle(ref ulong handle, ulong value)
+        {
+            if (value == Common.InvalidNotificationid)
+                throw new EpicSocketException("Handle was invalid");
+
+            handle = value;
+        }
+
+        static void RemoveHandle(ref ulong handle, Action<ulong> removeAction)
+        {
+            if (handle != Common.InvalidNotificationid)
+            {
+                removeAction.Invoke(handle);
+                handle = Common.InvalidNotificationid;
+            }
+        }
+
+        SocketId createSocketId()
+        {
+            return new SocketId() { SocketName = "Game" };
+        }
+
+        SendPacketOptions createSendOptions()
+        {
+            return new SendPacketOptions()
+            {
+                AllowDelayedDelivery = true,
+                Channel = 0,
+                LocalUserId = LocalUser,
+                Reliability = PacketReliability.UnreliableUnordered,
+                SocketId = createSocketId(),
+
+                RemoteUserId = null,
+                Data = null,
+            };
+        }
+
+        ReceivePacketOptions createReceiveOptions()
+        {
+            return new ReceivePacketOptions
+            {
+                LocalUserId = LocalUser,
+                MaxDataSizeBytes = P2PInterface.MaxPacketSize,
+                RequestedChannel = 0,
+            };
+        }
+
+
+        public bool CheckOpen()
+        {
+            // if handle is open and Eos is loaded
+            return IsOpen && EOSManagerFixer.IsLoaded();
+        }
+
+
+
+        // todo find way to send byte[] with length
+        public void SendGameData(ProductUserId userId, byte[] data)
+        {
+            _sendOptions.Channel = CHANNEL_GAME;
+            _sendOptions.Data = data;
+            _sendOptions.RemoteUserId = userId;
+            sendUsingOptions();
+        }
+
+        public void SendCommand(ProductUserId userId, byte info)
+        {
+            _sendOptions.Channel = CHANNEL_COMMAND;
+            _singleByteCommand[0] = info;
+            _sendOptions.Data = _singleByteCommand;
+            _sendOptions.RemoteUserId = userId;
+            sendUsingOptions();
+        }
+
+        public void SendCommand(ProductUserId userId, byte[] info)
+        {
+            _sendOptions.Channel = CHANNEL_COMMAND;
+            _sendOptions.Data = info;
+            _sendOptions.RemoteUserId = userId;
+            sendUsingOptions();
+        }
+
+        private void sendUsingOptions()
+        {
+            Result result = P2P.SendPacket(_sendOptions);
+            EpicLogger.WarnResult("Send Packet", result);
+        }
+
+        public bool ReceiveGameData(out ReceivedPacket receivedPacket)
+        {
+            _receiveOptions.RequestedChannel = CHANNEL_GAME;
+            return receiveUsingOptions(out receivedPacket);
+        }
+
+        public bool ReceiveCommand(out ReceivedPacket receivedPacket)
+        {
+            _receiveOptions.RequestedChannel = CHANNEL_COMMAND;
+            return receiveUsingOptions(out receivedPacket);
+        }
+
+        private bool receiveUsingOptions(out ReceivedPacket receivedPacket)
+        {
+            Result result = P2P.ReceivePacket(_receiveOptions, out receivedPacket.userId, out SocketId _, out byte _, out receivedPacket.data);
+
+            if (result != Result.Success && result != Result.NotFound) // log for results other than Success/NotFound
+                EpicLogger.WarnResult("Receive Packet", result);
+
+            return result == Result.Success;
+        }
+    }
+
+    struct ReceivedPacket
+    {
+        public ProductUserId userId;
+        public byte[] data;
+    }
+
     internal sealed class EpicSocket : ISocket
     {
-        bool isClosed;
+        bool _isClosed;
         RelayHandle _relayHandle;
-
-        readonly EOSManager.EOSSingleton _eos;
-        readonly P2PInterface _p2p;
-        readonly ProductUserId _localUser;
 
         SendPacketOptions _sendOptions;
         ReceivePacketOptions _receiveOptions;
@@ -458,120 +732,71 @@ namespace Mirage.Sockets.EpicSocket
         bool _isClient;
         readonly EpicEndPoint _receiveEndPoint = new EpicEndPoint();
 
-        public EpicSocket(EOSManager.EOSSingleton eos)
+        public EpicSocket(RelayHandle relayHandle)
         {
-            _eos = eos;
-            _p2p = _eos.GetEOSP2PInterface();
-            _localUser = EOSManager.Instance.GetProductUserId();
+            _relayHandle = relayHandle ?? throw new ArgumentNullException(nameof(relayHandle));
         }
 
-        void ThrowIfActive()
+        void ThrowIfRelayNotActive()
         {
-            if (_relayHandle.openId != 0 || _relayHandle.closeId != 0)
-                throw new InvalidOperationException("Socket already bound");
+            if (_relayHandle.IsOpen)
+                throw new InvalidOperationException("Relay not open, can not start socket");
         }
 
         public void Bind(IEndPoint endPoint)
         {
-            ThrowIfActive();
-
-            setupRelay();
+            ThrowIfRelayNotActive();
         }
 
         public void Connect(IEndPoint _endPoint)
         {
-            ThrowIfActive();
+            ThrowIfRelayNotActive();
             _isClient = true;
 
             _receiveEndPoint.CopyFrom((EpicEndPoint)_endPoint);
-
-            setupRelay();
-        }
-
-        void setupRelay()
-        {
-            _relayHandle = EpicHelper.EnableRelay(_p2p, _localUser, openCallback, closeCallback);
-            _sendOptions = EpicHelper.CreateSendOptions(_localUser);
-            _receiveOptions = EpicHelper.CreateReceiveOptions(_localUser);
-            if (EpicHelper.logger.LogEnabled()) EpicHelper.logger.Log($"Relay set up, localUser={_localUser}");
-        }
-
-        void openCallback(OnIncomingConnectionRequestInfo data)
-        {
-            bool validHost = checkRemoteUser(data.RemoteUserId);
-            if (!validHost)
-            {
-                EpicHelper.logger.LogError($"User ({data.RemoteUserId}) tried to connect to client");
-                return;
-            }
-
-            var options = new AcceptConnectionOptions()
-            {
-                LocalUserId = _localUser,
-                RemoteUserId = data.RemoteUserId,
-                // todo do we need to need to create new here
-                SocketId = EpicHelper.CreateSocketId()
-            };
-            Result result = _p2p.AcceptConnection(options);
-            EpicHelper.WarnResult("Accept Connection", result);
-        }
-
-        bool checkRemoteUser(ProductUserId remoteUser)
-        {
-            // and server doesn't need to check remote user
-            if (!_isClient)
-                return true;
-
-            // check that remote user is host
-            return _receiveEndPoint.UserId == remoteUser;
-        }
-
-        void closeCallback(OnRemoteConnectionClosedInfo data)
-        {
-            // isClient
-            if (_isClient)
-            {
-                Close();
-            }
-
-            if (EpicHelper.logger.WarnEnabled()) EpicHelper.logger.LogWarning($"Connection closed with reason: {data.Reason}");
+            _relayHandle.ConnectToRemoteUser(_receiveEndPoint.UserId);
         }
 
         public void Close()
         {
-            // todo do we need to call close on p2p?
-            // only disable if sdk is loaded
-            if (EOSManagerFixer.IsLoaded())
-            {
-                EpicHelper.DisableRelay(_p2p, _relayHandle);
-            }
+            _relayHandle.CloseRelay();
             _relayHandle = default;
-
-            isClosed = true;
+            _isClosed = true;
         }
 
+        bool IsOpenAndLoaded()
+        {
+            if (_isClosed)
+                return false;
+
+            if (_relayHandle.CheckOpen())
+            {
+                return true;
+            }
+            else
+            {
+                EpicLogger.logger.LogError("Calling when when EOS is not loaded, Closing socket");
+                Close();
+                return false;
+            }
+        }
 
         public bool Poll()
         {
-            if (isClosed) return false;
-            if (!EOSManagerFixer.IsLoaded())
-            {
-                EpicHelper.logger.LogWarning("Calling when when EOS is not loaded");
-                return false;
-            }
+            if (!IsOpenAndLoaded()) return false;
 
             // first time this tick?
             if (_lastTickedFrame != Time.frameCount)
             {
-                _eos.Tick();
+                _relayHandle.Manager.Tick();
                 _lastTickedFrame = Time.frameCount;
             }
 
             // todo do we need to do anything with socketid or channel?
-            Result result = _p2p.ReceivePacket(_receiveOptions, out _receivedPacket.userId, out SocketId _, out byte _, out _receivedPacket.data);
+            Result result = _relayHandle.P2P.ReceivePacket(_receiveOptions, out _receivedPacket.userId, out SocketId _, out byte _, out _receivedPacket.data);
 
             if (result != Result.Success && result != Result.NotFound) // log for results other than Success/NotFound
-                EpicHelper.WarnResult("Receive Packet", result);
+                EpicLogger.WarnResult("Receive Packet", result);
 
             return result == Result.Success;
         }
@@ -588,30 +813,22 @@ namespace Mirage.Sockets.EpicSocket
 
             // clear refs
             _receivedPacket = default;
-            EpicHelper.Verbose($"Receive {length} bytes from {_receivedPacket.userId}");
+            EpicLogger.Verbose($"Receive {length} bytes from {_receivedPacket.userId}");
             return length;
         }
 
-        public void Send(IEndPoint endPoint, byte[] packet, int length)
+        public void Send(IEndPoint iEndPoint, byte[] packet, int length)
         {
-            if (isClosed) return;
-            if (!EOSManagerFixer.IsLoaded())
-            {
-                EpicHelper.logger.LogWarning("Calling when when EOS is not loaded");
-                return;
-            }
+            if (!IsOpenAndLoaded()) return;
 
-            setEndPoint(endPoint);
+            var endPoint = (EpicEndPoint)iEndPoint;
 
             // send option has no length field, we have to copy to new array
             // todo avoid allocation
-            _sendOptions.Data = packet.Take(length).ToArray();
+            byte[] data = packet.Take(length).ToArray();
+            _relayHandle.SendGameData(endPoint.UserId, data);
 
-            Result result = _p2p.SendPacket(_sendOptions);
-
-            EpicHelper.WarnResult("Send Packet", result);
-
-            EpicHelper.Verbose($"Send {length} bytes to {_sendOptions.RemoteUserId}");
+            EpicLogger.Verbose($"Send {length} bytes to {_sendOptions.RemoteUserId}");
         }
 
         private void setEndPoint(IEndPoint iEndPoint)
@@ -625,23 +842,9 @@ namespace Mirage.Sockets.EpicSocket
             }
             _sendOptions.RemoteUserId = endPoint.UserId;
         }
-
-        struct ReceivedPacket
-        {
-            public ProductUserId userId;
-            public byte[] data;
-        }
     }
 
-    internal struct RelayHandle
-    {
-        public ulong openId;
-        public ulong closeId;
-        internal ulong establishedId;
-        internal ulong queueFullId;
-    }
-
-    internal class EpicHelper
+    internal static class EpicLogger
     {
         // change default log level based on if we are in debug or release mode.
         // this is only default, if there are log settings they will be used instead of these
@@ -666,99 +869,6 @@ namespace Mirage.Sockets.EpicSocket
 #else
             Console.WriteLine(log);
 #endif
-        }
-
-        protected EpicHelper() { }
-
-        /// <summary>
-        /// Starts relay as server, allows new connections
-        /// </summary>
-        /// <param name="notifyId"></param>
-        /// <param name="socketName"></param>
-        public static RelayHandle EnableRelay(P2PInterface p2p, ProductUserId localUser, OnIncomingConnectionRequestCallback openCallback, OnRemoteConnectionClosedCallback closedCallback)
-        {
-            var openOptions = new AddNotifyPeerConnectionRequestOptions { LocalUserId = localUser, };
-            var closeOptions = new AddNotifyPeerConnectionClosedOptions { LocalUserId = localUser, };
-
-            WarnResult("SetPacketQueueSize", p2p.SetPacketQueueSize(new SetPacketQueueSizeOptions { IncomingPacketQueueMaxSizeBytes = 64000, OutgoingPacketQueueMaxSizeBytes = 64000 }));
-            WarnResult("SetRelayControl", p2p.SetRelayControl(new SetRelayControlOptions { RelayControl = RelayControl.ForceRelays }));
-
-            RelayHandle handle = default;
-            handle.openId = p2p.AddNotifyPeerConnectionRequest(openOptions, null, (info) =>
-            {
-                Verbose($"Connection Request [User:{info.RemoteUserId} Socket:{info.SocketId}]");
-                openCallback.Invoke(info);
-            });
-            handle.establishedId = p2p.AddNotifyPeerConnectionEstablished(new AddNotifyPeerConnectionEstablishedOptions { LocalUserId = localUser, }, null, (info) =>
-            {
-                Verbose($"Connection Established: [User:{info.RemoteUserId} Socket:{info.SocketId} Type:{info.ConnectionType}]");
-            });
-            handle.closeId = p2p.AddNotifyPeerConnectionClosed(closeOptions, null, (info) =>
-            {
-                Verbose($"Connection Closed [User:{info.RemoteUserId} Socket:{info.SocketId} Reason:{info.Reason}]");
-                closedCallback.Invoke(info);
-            });
-            handle.queueFullId = p2p.AddNotifyIncomingPacketQueueFull(new AddNotifyIncomingPacketQueueFullOptions { }, null, (info) =>
-            {
-                Verbose($"Incoming Packet Queue Full");
-            });
-
-            if (handle.openId == Common.InvalidNotificationid)
-                throw new EpicSocketException("Failed add ConnectionRequest");
-
-            if (handle.closeId == Common.InvalidNotificationid)
-                throw new EpicSocketException("Failed add ConnectionClosed");
-
-            return handle;
-        }
-
-        public static void DisableRelay(P2PInterface p2p, RelayHandle handle)
-        {
-            if (handle.openId != Common.InvalidNotificationid)
-                p2p.RemoveNotifyPeerConnectionRequest(handle.openId);
-
-            if (handle.closeId != Common.InvalidNotificationid)
-                p2p.RemoveNotifyPeerConnectionClosed(handle.closeId);
-
-            if (handle.queueFullId != Common.InvalidNotificationid)
-                p2p.RemoveNotifyIncomingPacketQueueFull(handle.queueFullId);
-
-            if (handle.establishedId != Common.InvalidNotificationid)
-                p2p.RemoveNotifyPeerConnectionEstablished(handle.establishedId);
-        }
-
-        public static SocketId CreateSocketId()
-        {
-            return new SocketId() { SocketName = "Game" };
-        }
-
-        public static SendPacketOptions CreateSendOptions(ProductUserId localUser)
-        {
-            // random name length 20
-            //string socketName = Guid.NewGuid().ToString("N").Substring(0, 20);
-
-
-            return new SendPacketOptions()
-            {
-                AllowDelayedDelivery = true,
-                Channel = 0,
-                LocalUserId = localUser,
-                Reliability = PacketReliability.UnreliableUnordered,
-                SocketId = CreateSocketId(),
-
-                RemoteUserId = null,
-                Data = null,
-            };
-        }
-
-        public static ReceivePacketOptions CreateReceiveOptions(ProductUserId localUser)
-        {
-            return new ReceivePacketOptions
-            {
-                LocalUserId = localUser,
-                MaxDataSizeBytes = P2PInterface.MaxPacketSize,
-                RequestedChannel = 0,
-            };
         }
     }
 }
