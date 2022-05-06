@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace Mirage.Sockets.EpicSocket
 {
-    internal static class EpicLogger
+    public static class EpicLogger
     {
         // change default log level based on if we are in debug or release mode.
         // this is only default, if there are log settings they will be used instead of these
@@ -15,7 +15,7 @@ namespace Mirage.Sockets.EpicSocket
 #endif
         internal static readonly ILogger logger = LogFactory.GetLogger(typeof(EpicSocket), DEFAULT_LOG);
 
-        internal static void WarnResult(string tag, Result result)
+        public static void WarnResult(string tag, Result result)
         {
             if (result == Result.Success) return;
             if (logger.WarnEnabled())
