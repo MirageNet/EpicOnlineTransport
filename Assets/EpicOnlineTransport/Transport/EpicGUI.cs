@@ -161,6 +161,7 @@ namespace Mirage.Sockets.EpicSocket
         }
 
 
+
         private const int WIDTH = 500;
         private const int PADDING_X = 10;
         private const int PADDING_Y = 10;

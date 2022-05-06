@@ -1,4 +1,4 @@
-﻿using Cysharp.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using Epic.OnlineServices;
 using Epic.OnlineServices.Connect;
 using PlayEveryWare.EpicOnlineServices;
@@ -15,7 +15,7 @@ namespace Mirage.Sockets.EpicSocket
 
             LoginCallbackInfo loginInfo = await LoginAsync(manager, displayName);
 
-            EpicLogger.WarnResult("Login Callback", loginInfo.ResultCode);
+            EpicLogger.logger.WarnResult("Login Callback", loginInfo.ResultCode);
         }
 
         private static void ThrowIfResultInvalid(CreateDeviceIdCallbackInfo createInfo)

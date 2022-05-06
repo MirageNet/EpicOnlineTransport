@@ -103,7 +103,7 @@ namespace Mirage.Sockets.EpicSocket
                 SocketId = createSocketId()
             };
             Result result = P2P.AcceptConnection(options);
-            EpicLogger.WarnResult("Accept Connection", result);
+            EpicLogger.logger.WarnResult("Accept Connection", result);
         }
 
         bool checkRemoteUser(ProductUserId remoteUser)
@@ -255,7 +255,7 @@ namespace Mirage.Sockets.EpicSocket
             }
 
             Result result = P2P.SendPacket(_sendOptions);
-            EpicLogger.WarnResult("Send Packet", result);
+            EpicLogger.logger.WarnResult("Send Packet", result);
         }
 
         public bool ReceiveGameData(out ReceivedPacket receivedPacket)
@@ -275,7 +275,7 @@ namespace Mirage.Sockets.EpicSocket
             Result result = P2P.ReceivePacket(_receiveOptions, out receivedPacket.userId, out SocketId _, out byte _, out receivedPacket.data);
 
             if (result != Result.Success && result != Result.NotFound) // log for results other than Success/NotFound
-                EpicLogger.WarnResult("Receive Packet", result);
+                EpicLogger.logger.WarnResult("Receive Packet", result);
 
             return result == Result.Success;
         }

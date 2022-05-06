@@ -15,7 +15,7 @@ namespace Mirage.Sockets.EpicSocket
 #endif
         internal static readonly ILogger logger = LogFactory.GetLogger(typeof(EpicSocket), DEFAULT_LOG);
 
-        public static void WarnResult(string tag, Result result)
+        public static void WarnResult(this ILogger logger, string tag, Result result)
         {
             if (result == Result.Success) return;
             if (logger.WarnEnabled())

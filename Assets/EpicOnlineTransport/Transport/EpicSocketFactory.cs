@@ -140,7 +140,7 @@ namespace Mirage.Sockets.EpicSocket
             setRelayControlOptions.RelayControl = RelayControl.AllowRelays;
 
             Result result = EOSManager.Instance.GetEOSP2PInterface().SetRelayControl(setRelayControlOptions);
-            EpicLogger.WarnResult("Set Relay Controls", result);
+            EpicLogger.logger.WarnResult("Set Relay Controls", result);
         }
 
 

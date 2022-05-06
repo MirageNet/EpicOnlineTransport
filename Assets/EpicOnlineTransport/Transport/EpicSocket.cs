@@ -81,7 +81,7 @@ namespace Mirage.Sockets.EpicSocket
             Result result = _relayHandle.P2P.ReceivePacket(_receiveOptions, out _nextPacket.userId, out SocketId _, out byte _, out _nextPacket.data);
 
             if (result != Result.Success && result != Result.NotFound) // log for results other than Success/NotFound
-                EpicLogger.WarnResult("Receive Packet", result);
+                EpicLogger.logger.WarnResult("Receive Packet", result);
 
             return result == Result.Success;
         }

@@ -1,20 +1,23 @@
-﻿using Boo.Lang;
+using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
 using Epic.OnlineServices;
 using Epic.OnlineServices.Lobby;
+using Mirage.Logging;
 using UnityEngine;
 
 namespace Mirage.Sockets.EpicSocket
 {
     public class LobbyHelper
     {
+        internal static readonly ILogger logger = LogFactory.GetLogger(typeof(LobbyHelper));
+
         readonly ProductUserId _localUser;
         readonly LobbyInterface _lobby;
 
         public LobbyHelper(ProductUserId localUser, LobbyInterface lobby)
         {
-            this._localUser = localUser;
-            this._lobby = lobby;
+            _localUser = localUser;
+            _lobby = lobby;
         }
 
         public async UniTask StartLobby(string id)
@@ -33,15 +36,14 @@ namespace Mirage.Sockets.EpicSocket
 
             var awaiter = new AsyncWaiter<CreateLobbyCallbackInfo>();
             _lobby.CreateLobby(options, null, awaiter.Callback);
-            var result = await awaiter.Wait();
-            EpicLogger.WarnResult("Create Lobby", result.ResultCode);
+            CreateLobbyCallbackInfo result = await awaiter.Wait();
+            logger.WarnResult("Create Lobby", result.ResultCode);
             Debug.Assert(result.LobbyId == id);
         }
 
-        public async UniTask<List<LobbyDetails>> GetAllLobbies()
+        public async UniTask<List<LobbyDetails>> GetAllLobbies(uint maxResults = 10)
         {
-            const int MaxResults = 10;
-            EpicLogger.WarnResult("Create Search", _lobby.CreateLobbySearch(new CreateLobbySearchOptions { MaxResults = MaxResults, }, out var searchHandle));
+            logger.WarnResult("Create Search", _lobby.CreateLobbySearch(new CreateLobbySearchOptions { MaxResults = maxResults, }, out LobbySearch searchHandle));
 
             var options = new LobbySearchFindOptions
             {
@@ -49,22 +51,22 @@ namespace Mirage.Sockets.EpicSocket
             };
             var awaiter = new AsyncWaiter<LobbySearchFindCallbackInfo>();
             searchHandle.Find(options, null, awaiter.Callback);
-            var result = await awaiter.Wait();
-            EpicLogger.WarnResult("Search Find", result.ResultCode);
+            LobbySearchFindCallbackInfo result = await awaiter.Wait();
+            logger.WarnResult("Search Find", result.ResultCode);
 
             var getOption = new LobbySearchCopySearchResultByIndexOptions();
             var lobbyDetails = new List<LobbyDetails>();
-            for (var i = 0; i < MaxResults; i++)
+            for (int i = 0; i < maxResults; i++)
             {
                 getOption.LobbyIndex = (uint)i;
-                var getResult = searchHandle.CopySearchResultByIndex(getOption, out var lobbyDetail);
+                Result getResult = searchHandle.CopySearchResultByIndex(getOption, out LobbyDetails lobbyDetail);
                 if (getResult == Result.Success)
                 {
                     lobbyDetails.Add(lobbyDetail);
                 }
                 else
                 {
-                    EpicLogger.WarnResult("Search Get", result.ResultCode);
+                    logger.WarnResult("Search Get", result.ResultCode);
                 }
             }
 
