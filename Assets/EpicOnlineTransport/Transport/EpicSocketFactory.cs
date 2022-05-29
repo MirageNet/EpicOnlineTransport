@@ -18,7 +18,7 @@ namespace Mirage.Sockets.EpicSocket
         public DevAuthSettings DevAuth;
 
         [Header("Logging")]
-        public Epic.OnlineServices.Logging.LogLevel.Warning LogLevel = Epic.OnlineServices.Logging.LogLevel.Warning;
+        public Epic.OnlineServices.Logging.LogLevel LogLevel = Epic.OnlineServices.Logging.LogLevel.Warning;
 
         private static InitializeStatus s_status;
 
