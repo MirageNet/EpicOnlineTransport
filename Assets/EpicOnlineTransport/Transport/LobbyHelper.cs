@@ -25,7 +25,7 @@ namespace Mirage.Sockets.EpicSocket
             var options = new CreateLobbyOptions
             {
                 LocalUserId = _localUser,
-                MaxLobbyMembers = maxMembers,
+                MaxLobbyMembers = (uint)maxMembers,
                 PermissionLevel = LobbyPermissionLevel.Publicadvertised,
                 PresenceEnabled = true,
                 AllowInvites = true,
