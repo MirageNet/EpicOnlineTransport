@@ -20,37 +20,75 @@ namespace Mirage.Sockets.EpicSocket
             _lobby = lobby;
         }
 
-        public async UniTask StartLobby(string id)
+        public UniTask StartLobby(int maxMembers, string bucketId  = "Default") 
         {
             var options = new CreateLobbyOptions
             {
                 LocalUserId = _localUser,
-                MaxLobbyMembers = 4,
+                MaxLobbyMembers = maxMembers,
                 PermissionLevel = LobbyPermissionLevel.Publicadvertised,
-                PresenceEnabled = false,
-                AllowInvites = false,
+                PresenceEnabled = true,
+                AllowInvites = true,
                 DisableHostMigration = true,
                 EnableRTCRoom = false,
-                LobbyId = id,
+                BucketId = bucketId,
             };
-
+            return StartLobby(options);
+        }
+        public async UniTask StartLobby(CreateLobbyOptions options)
+        {
             var awaiter = new AsyncWaiter<CreateLobbyCallbackInfo>();
             _lobby.CreateLobby(options, null, awaiter.Callback);
             CreateLobbyCallbackInfo result = await awaiter.Wait();
             logger.WarnResult("Create Lobby", result.ResultCode);
-            Debug.Assert(result.LobbyId == id);
+            if (logger.LogEnabled()) logger.Log($"Lobby Created, ID:{result.LobbyId}");
+
+            if (result.ResultCode != Result.Success)
+                return;
+
+            await ModifyLobby(result.LobbyId);
+        }
+        public async UniTask ModifyLobby(string lobbyId)
+        {
+            _lobby.UpdateLobbyModification(new UpdateLobbyModificationOptions { LobbyId = lobbyId, LocalUserId = _localUser }, out LobbyModification modifyHandle);
+
+            AttributeData data = CreateMapAttribute();
+            modifyHandle.AddAttribute(new LobbyModificationAddAttributeOptions
+            {
+                Attribute = data,
+                Visibility = LobbyAttributeVisibility.Public
+            });
+
+            var awaiter = new AsyncWaiter<UpdateLobbyCallbackInfo>();
+            _lobby.UpdateLobby(new UpdateLobbyOptions { LobbyModificationHandle = modifyHandle }, null, awaiter.Callback);
+            UpdateLobbyCallbackInfo result = await awaiter.Wait();
+            logger.WarnResult("Modify Lobby", result.ResultCode);
+            if (logger.LogEnabled()) logger.Log($"Lobby Modified, ID:{result.LobbyId}");
+        }
+
+        private static AttributeData CreateMapAttribute()
+        {
+            var data = new AttributeData();
+            data.Key = "map";
+            data.Value = new AttributeDataValue();
+            data.Value.AsUtf8 = "test";
+            return data;
         }
 
         public async UniTask<List<LobbyDetails>> GetAllLobbies(uint maxResults = 10)
         {
             logger.WarnResult("Create Search", _lobby.CreateLobbySearch(new CreateLobbySearchOptions { MaxResults = maxResults, }, out LobbySearch searchHandle));
 
-            var options = new LobbySearchFindOptions
-            {
-                LocalUserId = _localUser
-            };
             var awaiter = new AsyncWaiter<LobbySearchFindCallbackInfo>();
-            searchHandle.Find(options, null, awaiter.Callback);
+
+            var paramOptions = new LobbySearchSetParameterOptions
+            {
+                ComparisonOp = ComparisonOp.Equal,
+                Parameter = CreateMapAttribute()
+            };
+
+            searchHandle.SetParameter(paramOptions);
+            searchHandle.Find(new LobbySearchFindOptions { LocalUserId = _localUser, }, null, awaiter.Callback);
             LobbySearchFindCallbackInfo result = await awaiter.Wait();
             logger.WarnResult("Search Find", result.ResultCode);
 
@@ -69,6 +107,8 @@ namespace Mirage.Sockets.EpicSocket
                     logger.WarnResult("Search Get", result.ResultCode);
                 }
             }
+
+            searchHandle.Release();
 
             return lobbyDetails;
         }

@@ -144,19 +144,16 @@ namespace Mirage.Sockets.EpicSocket
         {
             startWrapper(() =>
             {
-                EpicSocket.StartAsHost();
-                //Manager.Server.PeerConfig = config;
-                Manager.Server.StartServer(Manager.Client);
+                EpicSocket.StartAsHost(Manager.Server, Manager.Client);
             });
         }
 
-        public void StartClient(string productId)
+        public void StartClient(string hostProductId)
         {
             startWrapper(UniTask.Action(async () =>
             {
-                var hostId = ProductUserId.FromString(productId);
-                await EpicSocket.StartAsClient(hostId);
-                Manager.Client.Connect();
+                var hostId = ProductUserId.FromString(hostProductId);
+                await EpicSocket.StartAsClient(Manager.Client, hostId);
             }));
         }
 

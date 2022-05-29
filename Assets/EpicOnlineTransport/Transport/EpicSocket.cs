@@ -1,11 +1,9 @@
 using System;
 using System.Linq;
-using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using Mirage.Logging;
 using Mirage.SocketLayer;
 using UnityEngine;
-using UnityEngine.Assertions;
 
 namespace Mirage.Sockets.EpicSocket
 {
@@ -19,7 +17,7 @@ namespace Mirage.Sockets.EpicSocket
 
         int _lastTickedFrame;
         ReceivedPacket _nextPacket;
-        readonly EpicEndPoint _receiveEndPoint = new EpicEndPoint();
+        EpicEndPoint _receiveEndPoint;
 
         public EpicSocket(RelayHandle relayHandle)
         {
@@ -28,18 +26,20 @@ namespace Mirage.Sockets.EpicSocket
 
         void ThrowIfRelayNotActive()
         {
-            if (_relayHandle.IsOpen)
+            if (!_relayHandle.IsOpen)
                 throw new InvalidOperationException("Relay not open, can not start socket");
         }
 
         public void Bind(IEndPoint endPoint)
         {
             ThrowIfRelayNotActive();
+            _receiveEndPoint = (EpicEndPoint)endPoint;
         }
 
-        public void Connect(IEndPoint _endPoint)
+        public void Connect(IEndPoint endPoint)
         {
             ThrowIfRelayNotActive();
+            _receiveEndPoint = (EpicEndPoint)endPoint;
         }
 
         public void Close()
@@ -77,18 +77,13 @@ namespace Mirage.Sockets.EpicSocket
                 _lastTickedFrame = Time.frameCount;
             }
 
-            // todo do we need to do anything with socketid or channel?
-            Result result = _relayHandle.P2P.ReceivePacket(_receiveOptions, out _nextPacket.userId, out SocketId _, out byte _, out _nextPacket.data);
-
-            if (result != Result.Success && result != Result.NotFound) // log for results other than Success/NotFound
-                EpicLogger.logger.WarnResult("Receive Packet", result);
-
-            return result == Result.Success;
+            Debug.Assert(_nextPacket.data == null);
+            return _relayHandle.ReceiveGameData(out _nextPacket);
         }
 
         public int Receive(byte[] buffer, out IEndPoint endPoint)
         {
-            Assert.IsNotNull(_nextPacket.data);
+            Debug.Assert(_nextPacket.data != null);
 
             Buffer.BlockCopy(_nextPacket.data, 0, buffer, 0, _nextPacket.data.Length);
 
@@ -96,9 +91,10 @@ namespace Mirage.Sockets.EpicSocket
             endPoint = _receiveEndPoint;
             int length = _nextPacket.data.Length;
 
+            EpicLogger.Verbose($"Receive {length} bytes from {_nextPacket.userId}");
+
             // clear refs
             _nextPacket = default;
-            EpicLogger.Verbose($"Receive {length} bytes from {_nextPacket.userId}");
             return length;
         }
 
@@ -113,7 +109,7 @@ namespace Mirage.Sockets.EpicSocket
             byte[] data = packet.Take(length).ToArray();
             _relayHandle.SendGameData(endPoint.UserId, data);
 
-            EpicLogger.Verbose($"Send {length} bytes to {_sendOptions.RemoteUserId}");
+            EpicLogger.Verbose($"Send {length} bytes to {endPoint.UserId}");
         }
     }
 }

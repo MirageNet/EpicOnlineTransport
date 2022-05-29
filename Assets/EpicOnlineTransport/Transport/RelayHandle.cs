@@ -32,6 +32,8 @@ namespace Mirage.Sockets.EpicSocket
         byte[] _singleByteCommand = new byte[1];
 
         public bool IsOpen { get; private set; }
+        /// <summary>Host user</summary>
+        public ProductUserId RemoteUser => _remoteUser;
 
         static RelayHandle s_instance;
 
@@ -272,12 +274,25 @@ namespace Mirage.Sockets.EpicSocket
 
         private bool receiveUsingOptions(out ReceivedPacket receivedPacket)
         {
-            Result result = P2P.ReceivePacket(_receiveOptions, out receivedPacket.userId, out SocketId _, out byte _, out receivedPacket.data);
+            Result result = P2P.ReceivePacket(_receiveOptions, out ProductUserId userID, out SocketId _, out byte _, out byte[] data);
 
             if (result != Result.Success && result != Result.NotFound) // log for results other than Success/NotFound
                 EpicLogger.logger.WarnResult("Receive Packet", result);
 
-            return result == Result.Success;
+            if (result == Result.Success)
+            {
+                receivedPacket = new ReceivedPacket
+                {
+                    data = data,
+                    userId = userID,
+                };
+                return true;
+            }
+            else
+            {
+                receivedPacket = default;
+                return false;
+            }
         }
     }
 }

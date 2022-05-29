@@ -13,6 +13,13 @@ namespace Mirage.Sockets.EpicSocket
 {
     public class EpicSocketFactory : SocketFactory
     {
+        [Header("Dev Auth")]
+        public bool UseDevAuth;
+        public DevAuthSettings DevAuth;
+
+        [Header("Logging")]
+        public Epic.OnlineServices.Logging.LogLevel.Warning LogLevel = Epic.OnlineServices.Logging.LogLevel.Warning;
+
         private static InitializeStatus s_status;
 
         RelayHandle _relayHandle;
@@ -46,6 +53,15 @@ namespace Mirage.Sockets.EpicSocket
         /// Call this before starting Mirage
         /// </summary>
         /// <returns></returns>
+        public UniTask InitializeAsync(string displayName = null)
+        {
+            return InitializeAsync((UseDevAuth ? DevAuth : default(Nullable<DevAuthSettings>)), displayName);
+        }
+
+        /// <summary>
+        /// Call this before starting Mirage
+        /// </summary>
+        /// <returns></returns>
         public async UniTask InitializeAsync(DevAuthSettings? devAuth, string displayName = null)
         {
             if (s_status == InitializeStatus.Initialized)
@@ -63,7 +79,16 @@ namespace Mirage.Sockets.EpicSocket
 
             s_status = InitializeStatus.Initializing;
 
+
             checkName(ref displayName);
+
+            // add if missing
+            if (!TryGetComponent(out EOSManager manager))
+            {
+                manager = gameObject.AddComponent<EOSManager>();
+                // log must be called after init
+                Epic.OnlineServices.Logging.LoggingInterface.SetLogLevel(Epic.OnlineServices.Logging.LogCategory.AllCategories, LogLevel);
+            }
 
             // wait for sdk to finish
             while (!EpicHelper.IsLoaded())
@@ -87,7 +112,7 @@ namespace Mirage.Sockets.EpicSocket
             s_status = InitializeStatus.Initialized;
         }
 
-        public async UniTask StartAsClient(ProductUserId remoteHost)
+        public async UniTask StartAsClient(NetworkClient client, ProductUserId remoteHost)
         {
             if (s_status != InitializeStatus.Initialized)
                 throw new InvalidOperationException("Most be Initialized before calling Start");
@@ -106,9 +131,11 @@ namespace Mirage.Sockets.EpicSocket
             _commandHandler.AddHandler(CommandHandler.ACCEPT_JOIN, waiter.Callback);
             ProductUserId other = await waiter.Wait();
             Assert.AreEqual(remoteHost, other);
+
+            client.Connect();
         }
 
-        public void StartAsHost()
+        public void StartAsHost(NetworkServer server, NetworkClient client)
         {
             if (s_status != InitializeStatus.Initialized)
                 throw new InvalidOperationException("Most be Initialized before calling Start");
@@ -120,6 +147,8 @@ namespace Mirage.Sockets.EpicSocket
 
             // listen for join requests from users
             _commandHandler.AddHandler(CommandHandler.REQUEST_JOIN, AcceptUser);
+
+            server.StartServer(client);
         }
 
         void AcceptUser(ProductUserId remoteUser)
@@ -149,30 +178,32 @@ namespace Mirage.Sockets.EpicSocket
 
         public override ISocket CreateServerSocket()
         {
-            if (_relayHandle == null && _relayHandle.IsOpen)
-                throw new InvalidOperationException("Relay now active, Call Initialize first");
+            if (_relayHandle == null || !_relayHandle.IsOpen)
+                throw new InvalidOperationException("Relay not active, Call Initialize first");
 
             return new EpicSocket(_relayHandle);
         }
 
         public override ISocket CreateClientSocket()
         {
-            if (_relayHandle == null && _relayHandle.IsOpen)
-                throw new InvalidOperationException("Relay now active, Call Initialize first");
+            if (_relayHandle == null || !_relayHandle.IsOpen)
+                throw new InvalidOperationException("Relay not active, Call Initialize first");
 
             return new EpicSocket(_relayHandle);
         }
 
         public override IEndPoint GetBindEndPoint()
         {
-            // endpoint is handled inside socket
-            return null;
+            return new EpicEndPoint();
         }
 
         public override IEndPoint GetConnectEndPoint(string address = null, ushort? port = null)
         {
-            // endpoint is handled inside socket, client should pre-connect relay before starting socket. See StartAsClient
-            return null;
+            // need to pass host user to endpoint here, so that peer has the user when it creates copy of endPoint
+            return new EpicEndPoint()
+            {
+                UserId = _relayHandle.RemoteUser
+            };
         }
         #endregion
 
